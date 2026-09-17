@@ -187,7 +187,11 @@ namespace dxvk {
     bool gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData* replacementMaterial, std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures);
     void updateMaterialData(Rc<RtxContext> ctx);
     void onFrameBegin(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
-    void registerTerrainMesh(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState, const DrawCallState& drawCallState);
+    // Sets up this frame's baking state on the first terrain draw that may bake, and
+    // returns whether baking can proceed. False means the main camera for this frame has
+    // not been established yet, so the cascade parameters cannot be calculated and the
+    // caller must leave the draw unbaked.
+    bool registerTerrainMesh(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState, const DrawCallState& drawCallState);
     void calculateTerrainBBOX(const uint32_t currentFrameIndex);
     void calculateBakingParameters(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
     void updateTextureFormat(const DxvkContextState& dxvkCtxState);
