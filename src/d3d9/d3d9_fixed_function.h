@@ -255,9 +255,13 @@ namespace dxvk {
     return g_ffIsgn;
   }
 
+  // `stageIndex` is the texture stage this sample belongs to: the postprocess applies only to the
+  // stage the terrain baker swapped a replacement texture in at, which the baking spec constant
+  // carries alongside the texture category.
   uint32_t postprocessTextureReadForTerrainBaking(
     SpirvModule& spvModule,
     uint32_t textureValue,
+    uint32_t stageIndex,
     uint32_t texcoord,
     uint32_t texcoordType,
     std::function<uint32_t()> loadTexturePreOffsetFnc,

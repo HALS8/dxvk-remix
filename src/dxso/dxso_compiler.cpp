@@ -3262,7 +3262,7 @@ void DxsoCompiler::emitControlFlowGenericLoop(
           return m_module.constf32(1.0);
         };
 
-        return postprocessTextureReadForTerrainBaking(m_module, textureValue, texcoordVar.id, getVectorTypeId(texcoordVar.type), loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc);
+        return postprocessTextureReadForTerrainBaking(m_module, textureValue, samplerIdx, texcoordVar.id, getVectorTypeId(texcoordVar.type), loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc);
       };
 
       result.id = postprocessColorOutputTextureRead(result.id);

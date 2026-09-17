@@ -1703,6 +1703,7 @@ namespace dxvk {
   uint32_t postprocessTextureReadForTerrainBaking(
     SpirvModule& spvModule,
     uint32_t textureValue, 
+    uint32_t stageIndex,
     uint32_t texcoord,
     uint32_t texcoordType,
     std::function<uint32_t()> loadTexturePreOffsetFnc,
@@ -1719,10 +1720,14 @@ namespace dxvk {
     uint32_t vec4Type = spvModule.defVectorType(floatType, 4);
     uint32_t vec2Type = spvModule.defVectorType(floatType, 2);
 
-    // Initialize spec constant for texture category
-    uint32_t textureCategory = spvModule.specConst32(uint32Type, 0);
-    spvModule.setDebugName(textureCategory, "replacement_texture_category");
-    spvModule.decorateSpecId(textureCategory, getSpecId(D3D9SpecConstantId::ReplacementTextureCategory));
+    // Initialize spec constant for the texture category and the stage the baker swapped
+    uint32_t bakingSpec = spvModule.specConst32(uint32Type, 0);
+    spvModule.setDebugName(bakingSpec, "replacement_texture_spec");
+    spvModule.decorateSpecId(bakingSpec, getSpecId(D3D9SpecConstantId::ReplacementTextureCategory));
+    uint32_t textureCategory = spvModule.opBitwiseAnd(uint32Type, bakingSpec,
+                                                      spvModule.constu32(kReplacementTextureCategoryMask));
+    uint32_t replacedStage = spvModule.opShiftRightLogical(uint32Type, bakingSpec,
+                                                           spvModule.constu32(kReplacementTextureStageShift));
 
     // Allocate branch labels
     uint32_t addOpacityBeginLabel = spvModule.allocateId();
@@ -1730,10 +1735,15 @@ namespace dxvk {
 
     storeVec4ValueToRegisterFnc(textureValue);
 
-    // if (replacement_texture_category != ReplacementMaterialTextureCategory::AlbedoOpacity) { ... }
+    // if (baking a secondary texture && this is the stage the baker swapped) { ... }
+    // Only that stage holds a replacement texture; the rest still sample the game's own, and
+    // decoding one of those as a normal map -- or taking its alpha from the albedo -- is what
+    // destroys the blend weight a multi-stage terrain draw is baked with.
     uint32_t isNotAlbedoOpacity = spvModule.opINotEqual(boolType, textureCategory, spvModule.constu32(ReplacementMaterialTextureCategory::AlbedoOpacity));
+    uint32_t isReplacedStage = spvModule.opIEqual(boolType, replacedStage, spvModule.constu32(stageIndex));
+    uint32_t isReplacedTexture = spvModule.opLogicalAnd(boolType, isNotAlbedoOpacity, isReplacedStage);
     spvModule.opSelectionMerge(addOpacityEndLabel, spv::SelectionControlMaskNone);
-    spvModule.opBranchConditional(isNotAlbedoOpacity, addOpacityBeginLabel, addOpacityEndLabel);
+    spvModule.opBranchConditional(isReplacedTexture, addOpacityBeginLabel, addOpacityEndLabel);
     {
       // Decode the input texture value and add opacity
       spvModule.opLabel(addOpacityBeginLabel);
@@ -1827,10 +1837,13 @@ namespace dxvk {
       return vertexColor;
     }
 
-    // Initialize spec constant for texture category
-    uint32_t textureCategory = m_module.specConst32(m_uint32Type, 0);
-    m_module.setDebugName(textureCategory, "replacement_texture_category");
-    m_module.decorateSpecId(textureCategory, getSpecId(D3D9SpecConstantId::ReplacementTextureCategory));
+    // Initialize spec constant for texture category. The stage it is packed with is not needed
+    // here: vertex colour is per draw call, not per texture stage.
+    uint32_t bakingSpec = m_module.specConst32(m_uint32Type, 0);
+    m_module.setDebugName(bakingSpec, "replacement_texture_spec");
+    m_module.decorateSpecId(bakingSpec, getSpecId(D3D9SpecConstantId::ReplacementTextureCategory));
+    uint32_t textureCategory = m_module.opBitwiseAnd(m_uint32Type, bakingSpec,
+                                                     m_module.constu32(kReplacementTextureCategoryMask));
     
     // Allocate branch labels
     uint32_t removeVertexColorBeginLabel = m_module.allocateId();
@@ -2034,7 +2047,7 @@ namespace dxvk {
             };
             
 
-            return postprocessTextureReadForTerrainBaking(m_module, textureValue, texcoord, texcoord_t, loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc);
+            return postprocessTextureReadForTerrainBaking(m_module, textureValue, i, texcoord, texcoord_t, loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc);
           };
 
           texture = postprocessColorOutputTextureRead(texture);

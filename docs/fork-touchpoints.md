@@ -4185,3 +4185,48 @@ states above 255), which is how a caller detects support.
   forwards to the file-local `convert::toRtCategories`, so the D3D9 mask and API instances share
   one public-bit mapping.*
 - **src/dxvk/rtx_render/rtx_fork_hooks.h** - fork-owned. *Declares `fork_hooks::toRtCategories`.*
+
+---
+
+## Workstream - Terrain baker secondary texture maps (local - 2026-09-17)
+
+`TerrainBaker::bakeDrawCall` re-issues each terrain draw once per texture type, binding one colour
+target at a time and swapping the replacement material's texture for that type into the draw. The
+albedo cascade came out correct while normal, height and roughness came out blank or wrong, for
+three independent reasons.
+
+**The baking postprocess ran on every texture stage.** It sits inside the shader's `GetTexture()`,
+so on a secondary pass it octahedral-decoded *every* stage's sample and replaced its alpha with
+the replacement albedo's. A draw whose splat mask is a second texture had that mask destroyed -
+measured at 93% of one title's near-landscape draws. The albedo pass was unaffected because the
+postprocess is a no-op for that category, which is why albedo blended correctly while the normals
+stayed blank. It now applies only to the stage the baker swapped a texture in at.
+
+**That stage is not always 0.** `colorTextureSlot[]` is indexed by texture index rather than by
+stage, and a fixed-function draw's albedo is chosen by lowest texcoord index, so a draw carrying a
+lightmap on stage 0 has its albedo on stage 1. `LegacyMaterialData::colorTextureStage` carries the
+stage, packed into the baking spec constant beside the category (category in the low byte, stage
+in the high byte) because `D3D9SpecConstantId::Count` already equals `MaxNumSpecConstants`.
+
+**Every secondary cascade except Height cleared to zero.** A material with no roughness texture
+therefore baked a perfect mirror. The clear is now the material's own roughness/metallic constant,
+and `bakeMaterialConstants` goes further: it materialises that constant as a cached 1x1 texture
+and bakes it through the same path, so each draw writes its own value over its own footprint
+instead of the whole cascade sharing one clear. A constant equal to the clear is deliberately not
+skipped - writing nothing leaves the previous layer's value, which is the bleeding this exists to
+stop. It costs one extra baking pass per constant per draw, and a pass is one draw per cascade
+level, so the option exists to turn it off.
+
+- **src/dxvk/rtx_render/rtx_terrain_baker.h** - fork-touchpoint (+18 LOC). *`bakeMaterialConstants`
+  option, the `ConstantTexture` cache and `getConstantTexture`.*
+- **src/dxvk/rtx_render/rtx_terrain_baker.cpp** - fork-touchpoint (+80 / -9 LOC). *Clears
+  Roughness/Metallic to the material constant; materialises absent constants as cached 1x1
+  textures; packs the swapped stage into the baking spec constant.*
+- **src/dxvk/rtx_render/rtx_replacement_material_texture_type.h** - fork-touchpoint (+17 / -2 LOC).
+  *Replaces the fixed replaced-stage constant with `packReplacementTextureSpecConstant`.*
+- **src/d3d9/d3d9_fixed_function.h / .cpp** - inline tweak (+31 / -13 LOC). *The baking postprocess
+  takes the stage it is called for, and applies only to the stage the spec constant names.*
+- **src/dxso/dxso_compiler.cpp** - inline tweak (1 line). *Passes the sampler index as that stage.*
+- **src/dxvk/rtx_render/rtx_materials.h** - inline tweak (+9 / -1 LOC). *`colorTextureStage`, and a
+  bounds check on `getColorTextureSlot`, whose callers now index by stage as well as by texture.*
+- **src/d3d9/d3d9_rtx.cpp** - inline tweak (+2 LOC). *Records the stage the albedo was taken from.*
