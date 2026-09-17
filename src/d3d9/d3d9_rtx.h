@@ -191,6 +191,18 @@ namespace dxvk {
       return m_suppressedCategoryBits;
     }
 
+    /**
+      * \brief: Sets the categories following draw calls must take -- the
+      *         REMIXAPI_D3D9_RS_FORCE_CATEGORIES render state, see remix_c.h.
+      *
+      * \param [in] flags: mask of remixapi_InstanceCategoryBit values
+      */
+    void SetForcedCategories(uint32_t flags);
+
+    uint32_t GetForcedCategories() const {
+      return m_forcedCategoryBits;
+    }
+
   private: 
     // Reused fixed-size blocks: once allocated, a block is never reallocated, so background
     // skinning can keep raw Matrix4* into a prior copy. m_blocks can grow, but the heap
@@ -240,6 +252,8 @@ namespace dxvk {
     // the per-draw copy into DrawCallState.
     uint32_t m_suppressedCategoryBits = 0;
     CategoryFlags m_suppressedCategories = 0;
+    uint32_t m_forcedCategoryBits = 0;
+    CategoryFlags m_forcedCategories = 0;
 
     int m_activeOcclusionQueries = 0;
 

@@ -765,6 +765,12 @@ namespace dxvk {
 
     m_activeDrawCallState.categories = 0;
     m_activeDrawCallState.suppressedCategories = m_suppressedCategories;
+
+    // Suppression wins over forcing, so the two masks can be set independently without the
+    // caller having to reason about a category named in both.
+    CategoryFlags forced = m_forcedCategories;
+    forced.clr(m_suppressedCategories);
+    m_activeDrawCallState.categories.set(forced);
     m_activeDrawCallState.materialData = {};
 
     // Fetch all the legacy state (colour modes, alpha test, etc...)
@@ -852,6 +858,11 @@ namespace dxvk {
   void D3D9Rtx::SetSuppressedCategories(uint32_t flags) {
     m_suppressedCategoryBits = flags;
     m_suppressedCategories = fork_hooks::toRtCategories(flags);
+  }
+
+  void D3D9Rtx::SetForcedCategories(uint32_t flags) {
+    m_forcedCategoryBits = flags;
+    m_forcedCategories = fork_hooks::toRtCategories(flags);
   }
 
   void D3D9Rtx::triggerInjectRTX() {
