@@ -27,6 +27,8 @@
 #include "rtx_mipmap.h"
 #include "../util/util_struct_hash.h"
 
+#include <unordered_set>
+
 namespace dxvk {
 
   class TerrainBaker {
@@ -71,6 +73,15 @@ namespace dxvk {
 
     RTX_OPTION("rtx.terrainBaker", bool, clearTerrainBeforeBaking, false, "Performs a clear on the terrain texture before it is baked to in a frame.");
     RTX_OPTION("rtx.terrainBaker", bool, debugDisableBaking , false, "Force disables rebaking every frame. Used for debugging only.")
+    RTX_OPTION("rtx.terrainBaker", bool, logSurfaceOrientation, false,
+               "Diagnostic. Logs how each baked terrain draw call is oriented, once per distinct geometry.\n"
+               "The cascade map is a top-down projection, so it can only represent a surface that faces roughly up:\n"
+               "a near-vertical face projects to almost no area, writes almost nothing, and then samples the column\n"
+               "of texels above it - which is what smears one texture down a cliff, a cave wall or a ceiling.\n"
+               "Each line reports the material hash (the same hash rtx.terrainTextures is matched against), the\n"
+               "triangle count, and how those triangles are distributed by the angle between their face normal and\n"
+               "the up axis. A draw whose triangles are all flat or all vertical can be handled per draw call; one\n"
+               "that mixes both cannot, and needs the decision made per pixel instead.");
     RTX_OPTION("rtx.terrainBaker", bool, debugDisableBinding, false, "Force disables binding of the baked terrain texture to the terrain meshes. Used for debugging only.");
     RTX_OPTION("rtx.terrainBaker", bool, disableBackFaceCulling, false, "Disables back-face culling for baked terrain instances. When enabled, all terrain will render as double-sided.");
 
@@ -172,6 +183,7 @@ namespace dxvk {
       uint32_t frameIndex = kInvalidFrameIndex;  // Frame index for which the parameters have been calculated
     };
     TextureRef* getConstantTexture(Rc<DxvkContext>& ctx, float value);
+    void reportSurfaceOrientation(const DrawCallState& drawCallState);
     bool gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData* replacementMaterial, std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures);
     void updateMaterialData(Rc<RtxContext> ctx);
     void onFrameBegin(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
@@ -212,6 +224,10 @@ namespace dxvk {
       TextureRef texture;
     };
     fast_unordered_cache<ConstantTexture> m_constantTextureCache;
+
+    // Geometries already reported by logSurfaceOrientation. The same terrain patch is redrawn
+    // every frame, so without this the log is one line per draw call per frame.
+    std::unordered_set<XXH64_hash_t> m_loggedOrientations;
 
     VkFormat m_terrainRtColorFormat = VK_FORMAT_UNDEFINED;
 
