@@ -846,6 +846,11 @@ private:
   friend struct D3D9Rtx;
   friend struct RemixAPIPrivateAccessor;
 
+  // Fork touchpoint: bakeTerrain drops the terrain category from a draw that only contributed
+  // its colour to the cascade, so everything downstream sees the decal it actually is.
+  // See docs/fork-touchpoints.md.
+  friend class RtxContext;
+
   // Fork touchpoint: the external-draw texture-category hook needs access to
   // private setCategory. See docs/fork-touchpoints.md.
   friend void fork_hooks::externalDrawTextureCategories(
