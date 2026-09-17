@@ -1176,6 +1176,8 @@ namespace dxvk {
         if (FixedFunction) {
           firstStage = stage;
         }
+
+        m_activeDrawCallState.materialData.colorTextureStage = stage;
       }
 
       D3D9SamplerKey key = m_parent->CreateSamplerKey(stage);

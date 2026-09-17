@@ -93,10 +93,51 @@ namespace dxvk {
       return { neutral_height, neutral_height, neutral_height, neutral_height };
       break;
 
+    case ReplacementMaterialTextureType::Roughness:
+      // A terrain material without a roughness texture bakes nothing into this cascade, and a
+      // texel no draw has written reads back as the cleared value. Cleared to zero that is a
+      // perfect mirror wherever the terrain happens to have no roughness map, so the cascade
+      // starts at the constant the material would have used had it carried no texture at all.
+      return { Material::Properties::roughnessConstant(), Material::Properties::roughnessConstant(),
+               Material::Properties::roughnessConstant(), Material::Properties::roughnessConstant() };
+      break;
+
+    case ReplacementMaterialTextureType::Metallic:
+      // Same reasoning as roughness: unwritten metallic must read as the material constant.
+      return { Material::Properties::metallicConstant(), Material::Properties::metallicConstant(),
+               Material::Properties::metallicConstant(), Material::Properties::metallicConstant() };
+      break;
+
     default:
       return { 0.0f, 0.0f, 0.0f, 0.0f };
       break;
     }
+  }
+
+  TextureRef* TerrainBaker::getConstantTexture(Rc<DxvkContext>& ctx, float value) {
+    // Eight bits is the precision the baked cascade keeps anyway, and quantising here is what
+    // lets materials that authored the same value share one image.
+    const uint32_t quantized = static_cast<uint32_t>(fclamp(value, 0.f, 1.f) * 255.f + 0.5f);
+
+    auto entry = m_constantTextureCache.find(quantized);
+    if (entry == m_constantTextureCache.end()) {
+      const float level = quantized / 255.f;
+      const VkClearColorValue clearValue = { level, level, level, level };
+      Resources::Resource resource = Resources::createImageResource(
+        ctx, "terrain baking: material constant", VkExtent3D { 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM,
+        1, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, 0, VK_IMAGE_USAGE_STORAGE_BIT, clearValue);
+
+      if (resource.view == nullptr) {
+        ONCE(Logger::err("[RTX Terrain Baker] Failed to create a texture for a material constant. "
+                         "Materials with no texture for an input keep the cascade's clear value."));
+        return nullptr;
+      }
+
+      entry = m_constantTextureCache.emplace(quantized, ConstantTexture()).first;
+      entry->second.resource = std::move(resource);
+      entry->second.texture = TextureRef(entry->second.resource.view);
+    }
+    return &entry->second.texture;
   }
 
   bool TerrainBaker::isPSReplacementSupportEnabled(const DrawCallState& drawCallState) {
@@ -166,7 +207,8 @@ namespace dxvk {
       return extent;
     };
 
-    auto addValidTexture = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType) {
+    auto addValidTexture = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType,
+                               bool isMaterialTexture = true) {
 
       if (!texture.isValid()) {
         return;
@@ -174,8 +216,11 @@ namespace dxvk {
 
       // Track the source material texture to keep it in VidMem while it's being used for baking.
       // This needs to be done prior to checking for having valid views 
-      // since the views are not created until the texture is promoted
-      trackAndFinalizeTexture(texture);
+      // since the views are not created until the texture is promoted.
+      // A constant's texture is owned by the baker and always resident, so it is not tracked.
+      if (isMaterialTexture) {
+        trackAndFinalizeTexture(texture);
+      }
 
       if (!texture.getImageView()) {
         return;
@@ -237,6 +282,23 @@ namespace dxvk {
       }
     };
 
+    // A material with no texture for an input still has a value for it. Baking that value over the
+    // draw's own footprint is what keeps one surface's roughness off another's, which the
+    // cascade's clear cannot do: it holds a single value for every surface that writes nothing.
+    auto addTextureOrConstant = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType,
+                                    float constant) {
+      if (texture.isValid()) {
+        addValidTexture(texture, textureType);
+        return;
+      }
+      if (!Material::bakeMaterialConstants()) {
+        return;
+      }
+      if (TextureRef* constantTexture = getConstantTexture(dxvkCtx, constant)) {
+        addValidTexture(*constantTexture, textureType, false /* isMaterialTexture */);
+      }
+    };
+
     // Gather all replacement textures that need to be preprocessed
     replacementTextures.reserve(ReplacementMaterialTextureType::Count);
 
@@ -244,8 +306,10 @@ namespace dxvk {
       addValidTexture(replacementMaterial->getNormalTexture(), ReplacementMaterialTextureType::Normal);
       addValidTexture(replacementMaterial->getTangentTexture(), ReplacementMaterialTextureType::Tangent);
       addValidTexture(replacementMaterial->getHeightTexture(), ReplacementMaterialTextureType::Height);
-      addValidTexture(replacementMaterial->getRoughnessTexture(), ReplacementMaterialTextureType::Roughness);
-      addValidTexture(replacementMaterial->getMetallicTexture(), ReplacementMaterialTextureType::Metallic);
+      addTextureOrConstant(replacementMaterial->getRoughnessTexture(), ReplacementMaterialTextureType::Roughness,
+                           replacementMaterial->getRoughnessConstant());
+      addTextureOrConstant(replacementMaterial->getMetallicTexture(), ReplacementMaterialTextureType::Metallic,
+                           replacementMaterial->getMetallicConstant());
       addValidTexture(replacementMaterial->getEmissiveColorTexture(), ReplacementMaterialTextureType::Emissive);
 
 
@@ -405,7 +469,8 @@ namespace dxvk {
 
     bool bakingResult = false;
 
-    ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory, static_cast<uint32_t>(ReplacementMaterialTextureCategory::AlbedoOpacity));
+    ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory,
+                             packReplacementTextureSpecConstant(ReplacementMaterialTextureCategory::AlbedoOpacity, drawCallState.getMaterialData().colorTextureStage));
     
     // The height value that corresponds to the original surface height.
     const float prevFrameTotalHeight = m_prevFrameMaxDisplaceIn + m_prevFrameMaxDisplaceOut;
@@ -444,21 +509,25 @@ namespace dxvk {
           switch (textureType) {
           case ReplacementMaterialTextureType::Enum::AlbedoOpacity:
           default:
-            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory, static_cast<uint32_t>(ReplacementMaterialTextureCategory::AlbedoOpacity));
+            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory,
+                             packReplacementTextureSpecConstant(ReplacementMaterialTextureCategory::AlbedoOpacity, drawCallState.getMaterialData().colorTextureStage));
             break;
 
           case ReplacementMaterialTextureType::Enum::Normal:
           case ReplacementMaterialTextureType::Enum::Tangent:
-            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory, static_cast<uint32_t>(ReplacementMaterialTextureCategory::SecondaryOctahedralEncoded));
+            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory,
+                             packReplacementTextureSpecConstant(ReplacementMaterialTextureCategory::SecondaryOctahedralEncoded, drawCallState.getMaterialData().colorTextureStage));
             break;
 
           case ReplacementMaterialTextureType::Enum::Roughness:
           case ReplacementMaterialTextureType::Enum::Metallic:
           case ReplacementMaterialTextureType::Enum::Emissive:
-            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory, static_cast<uint32_t>(ReplacementMaterialTextureCategory::SecondaryRaw));
+            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory,
+                             packReplacementTextureSpecConstant(ReplacementMaterialTextureCategory::SecondaryRaw, drawCallState.getMaterialData().colorTextureStage));
             break;
           case ReplacementMaterialTextureType::Enum::Height:
-            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory, static_cast<uint32_t>(ReplacementMaterialTextureCategory::SecondaryScaled));
+            ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, D3D9SpecConstantId::ReplacementTextureCategory,
+                             packReplacementTextureSpecConstant(ReplacementMaterialTextureCategory::SecondaryScaled, drawCallState.getMaterialData().colorTextureStage));
             break;
           }
 

@@ -1868,7 +1868,9 @@ struct LegacyMaterialData {
   }
 
   uint32_t getColorTextureSlot(uint32_t slot) const {
-    return colorTextureSlot[slot];
+    // Callers ask about texture stages as well as tracked textures, and only kMaxSupportedTextures
+    // of the latter are kept. A stage this draw does not use has no slot.
+    return slot < kMaxSupportedTextures ? colorTextureSlot[slot] : kInvalidResourceSlot;
   }
 
   bool alphaTestEnabled = false;
@@ -1914,6 +1916,12 @@ private:
   Rc<DxvkSampler> samplers[kMaxSupportedTextures] = {};
   static_assert(kInvalidResourceSlot == 0 && "Below initialization of all array members is only valid for a value of 0.");
   uint32_t colorTextureSlot[kMaxSupportedTextures] = { kInvalidResourceSlot };
+
+  // The D3D9 texture stage colorTextures[0] was taken from. Textures are chosen by texture
+  // coordinate index rather than by stage, so the albedo is not always on stage 0 -- a draw can
+  // put a lightmap there and its albedo on stage 1. Anything that has to address the albedo's
+  // stage in the shader, rather than its resource slot, needs this.
+  uint32_t colorTextureStage = 0;
 
   XXH64_hash_t m_cachedHash = kEmptyHash;
 };
