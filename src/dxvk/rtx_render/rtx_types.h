@@ -870,7 +870,8 @@ private:
   void finalizeGeometryBoundingBox();
   void finalizeSkinningData(const RtCamera* pLastCamera);
 
-  // NOTE: 'setCategory' can only add a category, it will not unset a bit
+  // NOTE: 'setCategory' can only add a category, it will not unset a bit, and never adds one
+  //       in suppressedCategories
   void setCategory(InstanceCategories category, bool set);
   void removeCategory(InstanceCategories category);
 
@@ -889,6 +890,12 @@ private:
   FogState fogState;
 
   CategoryFlags categories = 0;
+
+  // Categories this draw may never take, whatever its textures or geometry are tagged as. Set by
+  // the D3D9 layer from REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES (remix_c.h). Enforced in setCategory,
+  // so category sources honour it without knowing it exists -- including ones that run later,
+  // such as the geometry-hash categories assigned when pending futures are finalized.
+  CategoryFlags suppressedCategories = 0;
 
   // Overridden geometry (replaced or external) and states.
   // geometryData is an aliased shared pointer, and keeps the source MeshReplacement
