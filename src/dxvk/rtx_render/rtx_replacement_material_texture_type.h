@@ -49,4 +49,21 @@ namespace ReplacementMaterialTextureCategory {
 // This could be made bound to a dynamic slot or to a different resource should it 
 // conflict in any game in the future.
 static const unsigned int kTerrainBakerSecondaryTextureStage = 7;
+
+// The terrain baking spec constant carries two things: which category of replacement texture is
+// being baked, and which D3D9 texture stage the baker swapped it in at. They share one constant
+// because D3D9SpecConstantId is already at DxvkLimits::MaxNumSpecConstants, and a new one would
+// grow the pipeline state key for every pipeline in the renderer.
+//
+// The stage matters because only that one stage holds a replacement texture. Every other stage
+// keeps sampling the game's own -- a blend mask, a lightmap -- so the baking postprocess must be
+// applied to the swapped stage alone. Applied to all of them, a mask gets decoded as if it were
+// an octahedral normal and its alpha replaced by the albedo's, which makes a multi-stage terrain
+// draw bake its secondary textures with the wrong blend weight.
+static const unsigned int kReplacementTextureStageShift = 8;
+static const unsigned int kReplacementTextureCategoryMask = 0xFF;
+
+static inline unsigned int packReplacementTextureSpecConstant(unsigned int category, unsigned int stage) {
+  return (category & kReplacementTextureCategoryMask) | (stage << kReplacementTextureStageShift);
+}
 #endif

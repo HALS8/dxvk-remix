@@ -97,6 +97,12 @@ namespace dxvk {
                  "This parameter must be set at launch to apply. The current support for this is limitted to draw calls with programmable shaders with Shader Model 1.0 only.\n"
                  "Draw calls with Shader Model 2.0+ will use the preprocessing compute pass.");
       RTX_OPTION("rtx.terrainBaker.material", bool, bakeReplacementMaterials, true, "Enables baking of replacement materials when they are present.");
+      RTX_OPTION("rtx.terrainBaker.material", bool, bakeMaterialConstants, true,
+                 "Bakes a replacement material's roughness or metallic constant where that material has no texture for it.\n"
+                 "Without this, a terrain surface carrying a constant contributes nothing to that texture's cascade, so the\n"
+                 "texels it covers keep the cascade's clear value - one value for every such surface in the world.\n"
+                 "A constant costs the draw call an extra baking pass, so turning this off trades per-material accuracy for\n"
+                 "baking cost.");
       // ToDo disable by default
       RTX_OPTION_ENV("rtx.terrainBaker.material", bool, bakeSecondaryPBRTextures, true, "RTX_TERRAIN_BAKER_BAKE_SECONDARY_PBR_TEXTURES", 
                      "Enables baking of secondary textures in replacement materials when they are present.\n"
@@ -165,6 +171,7 @@ namespace dxvk {
       float lastCascadeScale; // Scale applied on last cascade's size to expand it to cover the whole cascade map span
       uint32_t frameIndex = kInvalidFrameIndex;  // Frame index for which the parameters have been calculated
     };
+    TextureRef* getConstantTexture(Rc<DxvkContext>& ctx, float value);
     bool gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData* replacementMaterial, std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures);
     void updateMaterialData(Rc<RtxContext> ctx);
     void onFrameBegin(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
@@ -194,6 +201,17 @@ namespace dxvk {
     };
 
     fast_unordered_cache<Resources::Resource> m_stagingTextureCache;
+
+    // A terrain material may carry a constant where another carries a texture -- a roughness
+    // number rather than a roughness map. Materialising that constant as a 1x1 texture lets it
+    // bake through exactly the path a real texture takes, so the draw writes its own value over
+    // its own footprint with the blend weight the albedo pass used. Keyed on the quantised
+    // value, so the handful of distinct constants in a scene share one image.
+    struct ConstantTexture {
+      Resources::Resource resource;
+      TextureRef texture;
+    };
+    fast_unordered_cache<ConstantTexture> m_constantTextureCache;
 
     VkFormat m_terrainRtColorFormat = VK_FORMAT_UNDEFINED;
 
