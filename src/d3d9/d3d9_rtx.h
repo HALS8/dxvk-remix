@@ -179,6 +179,18 @@ namespace dxvk {
       return m_reflexFrameId;
     }
 
+    /**
+      * \brief: Sets the categories following draw calls must not take -- the
+      *         REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES render state, see remix_c.h.
+      *
+      * \param [in] flags: mask of remixapi_InstanceCategoryBit values
+      */
+    void SetSuppressedCategories(uint32_t flags);
+
+    uint32_t GetSuppressedCategories() const {
+      return m_suppressedCategoryBits;
+    }
+
   private: 
     // Reused fixed-size blocks: once allocated, a block is never reallocated, so background
     // skinning can keep raw Matrix4* into a prior copy. m_blocks can grow, but the heap
@@ -223,6 +235,11 @@ namespace dxvk {
     bool m_rtxInjectTriggered = false;
     bool m_forceGeometryCopy = false;
     DWORD m_texcoordIndex = 0;
+
+    // Kept as set, so GetRenderState returns exactly what the caller wrote, and pre-mapped for
+    // the per-draw copy into DrawCallState.
+    uint32_t m_suppressedCategoryBits = 0;
+    CategoryFlags m_suppressedCategories = 0;
 
     int m_activeOcclusionQueries = 0;
 

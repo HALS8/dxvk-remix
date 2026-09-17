@@ -1058,6 +1058,12 @@ std::unique_ptr<dxvk::ExternalDrawState> dxvk::RemixAPIPrivateAccessor::toRtDraw
   return state;
 }
 
+// Fork touchpoint: see docs/fork-touchpoints.md. Defined here because convert:: is local to this
+// file.
+dxvk::CategoryFlags dxvk::fork_hooks::toRtCategories(remixapi_InstanceCategoryFlags flags) {
+  return convert::toRtCategories(flags);
+}
+
 namespace {
   remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMaterial(
     const remixapi_MaterialInfo* info,

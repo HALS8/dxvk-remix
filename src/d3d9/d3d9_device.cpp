@@ -48,6 +48,8 @@
 #include "../dxvk/rtx_render/rtx_options.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
 
+#include <remix/remix_c.h>
+
 #include "d3d9_initializer.h"
 
 #include <algorithm>
@@ -1986,6 +1988,12 @@ namespace dxvk {
     ScopedCpuProfileZone();
     D3D9DeviceLock lock = LockDevice();
 
+    // Fork touchpoint: Remix extension outside the range validated below, see remix_c.h.
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES)) {
+      m_rtx.SetSuppressedCategories(Value);
+      return D3D_OK;
+    }
+
     // D3D9 only allows reading for values 0 and 7-255 so we don't need to do anything but return OK
     if (unlikely(State > 255 || (State < D3DRS_ZENABLE && State != 0))) {
       return D3D_OK;
@@ -2317,6 +2325,12 @@ namespace dxvk {
 
     if (unlikely(pValue == nullptr))
       return D3DERR_INVALIDCALL;
+
+    // Fork touchpoint: Remix extension outside the range validated below, see remix_c.h.
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES)) {
+      *pValue = m_rtx.GetSuppressedCategories();
+      return D3D_OK;
+    }
 
     if (unlikely(State > 255 || (State < D3DRS_ZENABLE && State != 0))) {
       return D3DERR_INVALIDCALL;
@@ -7884,6 +7898,9 @@ namespace dxvk {
     m_rtx.SetDirty(D3D9RtxFlag::DirtyLights);
     m_rtx.SetDirty(D3D9RtxFlag::DirtyClipPlanes);
     // NV-DXVK end
+
+    // Fork touchpoint: the suppression render state resets with the rest, see remix_c.h.
+    m_rtx.SetSuppressedCategories(0);
 
     return D3D_OK;
   }

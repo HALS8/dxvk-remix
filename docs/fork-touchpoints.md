@@ -4142,3 +4142,46 @@ no way to ask the question at all.
 - **src/dxvk/rtx_render/rtx_ngx_wrapper.cpp** - inline tweak (+11 / -4 LOC). *Replaces the
   `#ifndef NDEBUG` guards around the NGX logging callback with the option, so a release build can
   be asked for the same diagnostics. Read once at NGX init, so a change needs a restart.*
+
+---
+
+## Workstream - D3D9 per-draw category suppression (local - 2026-09-11)
+
+Texture-hash category lists apply to every draw binding a listed texture, so one texture that
+serves two roles gives both draws the same categories. The motivating case: a game shares a rock
+texture between a terrain splat layer and its rock meshes; `rtx.terrainTextures` then bakes the
+meshes as terrain, and they sample the top-down cascade map (grass wins at their XY, stretched down
+their vertical faces). No list can express "this texture, but not on this draw".
+
+`REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES` is a render state carrying a `remixapi_InstanceCategoryBit`
+mask the following draws must not take. A render state rather than a `remixapi_Interface` slot:
+it adds no ABI (no vtable growth, no MINOR bump) and orders itself with draws on the calling
+thread for free. NOT bridge-safe as it stands: the bridge client caches render states in
+`std::array<DWORD, kNumRenderStates = 256>` indexed by the raw state value with no bounds check
+(`bridge/src/client/d3d9_device.cpp`, Set/GetRenderState), so an out-of-range state is an
+out-of-bounds write there. A 32-bit bridge title would need a guard that skips that cache and
+forwards the call; in-process x64 integrations like this one are unaffected.
+Enforced inside `DrawCallState::setCategory`, so every category source - texture lists,
+heuristics, and the geometry-hash categories finalized later on the CS thread - honours it without
+knowing it exists. Categories authored on a USD replacement and particle-system categories write
+the flags directly and are unaffected by design. Cleared by `Reset`; not captured by state blocks.
+`GetRenderState` returns the mask, and fails on runtimes without the extension (DXVK rejects
+states above 255), which is how a caller detects support.
+
+- **public/include/remix/remix_c.h** - block. *Defines `REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES`
+  (`0x52584301`) with its contract, after `remixapi_InstanceCategoryFlags`.*
+- **src/d3d9/d3d9_device.cpp** - inline tweak (+14 LOC). *Includes `remix/remix_c.h`;
+  `SetRenderState` / `GetRenderState` intercept the state ahead of the 0..255 range check;
+  `ResetState` clears the mask.*
+- **src/d3d9/d3d9_rtx.h** - inline tweak. *`SetSuppressedCategories` / `GetSuppressedCategories`
+  and the mask, held both as written and pre-mapped to `CategoryFlags`.*
+- **src/d3d9/d3d9_rtx.cpp** - inline tweak. *Includes `rtx_fork_hooks.h`; defines
+  `SetSuppressedCategories`; copies the mask into the draw's `DrawCallState` beside the
+  `categories = 0` reset in `internalPrepareDraw`.*
+- **src/dxvk/rtx_render/rtx_types.h** - inline tweak. *`DrawCallState::suppressedCategories`.*
+- **src/dxvk/rtx_render/rtx_types.cpp** - inline tweak (1 line). *`setCategory` refuses a
+  suppressed category.*
+- **src/dxvk/rtx_render/rtx_remix_api.cpp** - hook definition. *`fork_hooks::toRtCategories`
+  forwards to the file-local `convert::toRtCategories`, so the D3D9 mask and API instances share
+  one public-bit mapping.*
+- **src/dxvk/rtx_render/rtx_fork_hooks.h** - fork-owned. *Declares `fork_hooks::toRtCategories`.*
