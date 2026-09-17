@@ -80,6 +80,12 @@ enable_rtxio = get_option('enable_rtxio')
 external_dll_paths = []
 
 if dxvk_is_msvc
+  # LNK4099 - a prebuilt third-party lib was shipped without its PDB, so the linker cannot
+  # attribute debug info to it. The packman sentry-native and glfw packages are both like
+  # this, and every target that links them warns. Nothing in this tree can supply those
+  # PDBs, and werror=true would otherwise make a third-party packaging detail fatal.
+  add_global_link_arguments('/IGNORE:4099', language : 'cpp')
+
   if dxvk_is_woa
     # sse2neon requires conformant preproc
     add_global_arguments('/Zc:preprocessor', language : 'cpp')
