@@ -465,7 +465,9 @@ namespace dxvk {
     }
 
     // Register mesh and preprocess state for baking for this frame
-    registerTerrainMesh(ctx, dxvkCtxState, drawCallState);
+    if (!registerTerrainMesh(ctx, dxvkCtxState, drawCallState)) {
+      return false;
+    }
 
     if (!debugDisableBinding()) {
       textureTransformOut = m_bakingParams.viewToCascade0TextureSpace;
@@ -1167,17 +1169,30 @@ namespace dxvk {
     }
   }
 
-  void TerrainBaker::registerTerrainMesh(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState, const DrawCallState& drawCallState) {
+  bool TerrainBaker::registerTerrainMesh(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState, const DrawCallState& drawCallState) {
     const uint32_t currentFrameIndex = ctx->getDevice()->getCurrentFrameId();
 
     // This is the first call in a frame, set up baking state for the new frame
     if (m_bakingParams.frameIndex != currentFrameIndex) {
+      // The cascade is centered on the main camera and its parameters are frozen for the
+      // rest of the frame. RtCamera::update ignores every call after the first one in a
+      // frame, so a terrain draw submitted before the main camera has been established
+      // would center the cascade on the previous frame's camera and leave every baked
+      // texel lagging the geometry it is sampled by. Wait for the camera instead, so that
+      // which draw call happens to arrive first cannot move the cascade.
+      if (!ctx->getSceneManager().getCamera().isValid(currentFrameIndex)) {
+        ONCE(Logger::info("[RTX Terrain Baker] Terrain was submitted before the main camera was established. Those draw calls are left unbaked until the camera is known for the frame."));
+        return false;
+      }
+
       onFrameBegin(ctx, dxvkCtxState);
     }
 
     if (cascadeMap.useTerrainBBOX()) { 
       m_terrainMeshBBOXes.emplace_back(AxisAlignedBoundingBoxLink(drawCallState));
     }
+
+    return true;
   }
 
   void TerrainBaker::calculateCascadeMapResolution(const Rc<DxvkDevice>& device) {
