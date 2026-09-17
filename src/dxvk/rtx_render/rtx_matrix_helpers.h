@@ -57,8 +57,27 @@ static inline void decomposeProjection(const dxvk::Matrix4& matrix, float& aspec
   farPlane = cameraParams[PROJ_ZFAR];
   shearX = cameraParams[PROJ_DIRX];
   shearY = cameraParams[PROJ_DIRY];
-  isLHS = (flags & PROJ_LEFT_HANDED) ? 1 : 0;
   isReverseZ = (flags & PROJ_REVERSED_Z) ? 1 : 0;
+
+  // MathLib decides handedness with `proj.a22 > 0.0f`, but reversed-Z negates that term:
+  // m[2][2] = zn/(zn-zf) instead of zf/(zf-zn). So every reversed-Z projection is flagged
+  // with the wrong handedness, and the error is worst when zf >> zn and the term collapses
+  // toward zero (observed on a left-handed reversed-Z title: m[2][2] = -5e-05, flagged
+  // right-handed).
+  //
+  // The w-term is the discriminator that reversed-Z leaves alone: +1 for a left-handed D3D
+  // perspective, -1 for right-handed. It is 0 only for an orthographic projection, where
+  // handedness has to come from MathLib.
+  //
+  // Getting this wrong negates RtCamera::getDirection() while leaving getUp()/getRight()
+  // alone, which flips the free camera's forward axis and mirrors every consumer of the
+  // decomposed camera basis. Anything driven by the full matrix is unaffected, so it
+  // presents as a handful of unrelated-looking bugs rather than one obvious one.
+  isLHS = (flags & PROJ_LEFT_HANDED) ? 1 : 0;
+  constexpr float kPerspectiveWTermEpsilon = 1e-6f;
+  if (matrix[2][3] > kPerspectiveWTermEpsilon || matrix[2][3] < -kPerspectiveWTermEpsilon) {
+    isLHS = matrix[2][3] > 0.0f;
+  }
 
 #ifdef _DEBUG
   if (log) {
