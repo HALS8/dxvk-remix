@@ -37,6 +37,11 @@
 #include "../../dxso/dxso_util.h"
 #include "../../d3d9/d3d9_caps.h"
 
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <iomanip>
+
 namespace {
   // By default, a value of 1.f will have 0 displacement.
   const float kDefaultNeutralHeight = 1.f;
@@ -333,6 +338,104 @@ namespace dxvk {
     return true;
   }
 
+  void TerrainBaker::reportSurfaceOrientation(const DrawCallState& drawCallState) {
+    const RasterGeometry& geometry = drawCallState.getGeometryData();
+
+    // The same terrain patch is redrawn every frame; one line per distinct geometry is enough.
+    if (!m_loggedOrientations.insert(geometry.hashes[HashComponents::VertexPosition]).second) {
+      return;
+    }
+
+    const GeometryBufferData buffers(geometry);
+    if (buffers.positionData == nullptr) {
+      ONCE(Logger::warn("[RTX Terrain Baker] orientation: no CPU-side positions to measure."));
+      return;
+    }
+
+    const Matrix4 objectToWorld = drawCallState.getTransformData().objectToWorld;
+    const Vector3 upAxis = RtxOptions::zUp() ? Vector3(0.f, 0.f, 1.f) : Vector3(0.f, 1.f, 0.f);
+
+    const bool indexed = buffers.indexData != nullptr && geometry.indexCount >= 3;
+    const uint32_t cornerCount = indexed ? geometry.indexCount : geometry.vertexCount;
+
+    // Bands are on |n . up|, so a consistent winding is not required to answer the question that
+    // matters: whether one draw call mixes surfaces the cascade can represent with surfaces it
+    // cannot. The signed count is reported separately and does depend on winding.
+    uint32_t flat = 0, gentle = 0, steep = 0, vertical = 0, facingDown = 0, degenerate = 0;
+    float minAbsUp = FLT_MAX;
+    float maxAbsUp = -FLT_MAX;
+    double sumAbsUp = 0.0;
+    uint32_t triangles = 0;
+
+    const auto worldPosition = [&](uint32_t index) {
+      const float* p = &buffers.positionData[index * buffers.positionStride];
+      const Vector4 world = objectToWorld * Vector4(p[0], p[1], p[2], 1.f);
+      return Vector3(world.x, world.y, world.z);
+    };
+
+    for (uint32_t corner = 0; corner + 2 < cornerCount; corner += 3) {
+      const uint32_t i0 = indexed ? buffers.indexData[(corner + 0) * buffers.indexStride] : corner + 0;
+      const uint32_t i1 = indexed ? buffers.indexData[(corner + 1) * buffers.indexStride] : corner + 1;
+      const uint32_t i2 = indexed ? buffers.indexData[(corner + 2) * buffers.indexStride] : corner + 2;
+
+      if (i0 >= geometry.vertexCount || i1 >= geometry.vertexCount || i2 >= geometry.vertexCount) {
+        ++degenerate;
+        continue;
+      }
+
+      const Vector3 p0 = worldPosition(i0);
+      const Vector3 edge1 = worldPosition(i1) - p0;
+      const Vector3 edge2 = worldPosition(i2) - p0;
+
+      const Vector3 faceNormal(edge1.y * edge2.z - edge1.z * edge2.y,
+                               edge1.z * edge2.x - edge1.x * edge2.z,
+                               edge1.x * edge2.y - edge1.y * edge2.x);
+      const float length = std::sqrt(faceNormal.x * faceNormal.x +
+                                     faceNormal.y * faceNormal.y +
+                                     faceNormal.z * faceNormal.z);
+      if (length <= 1e-8f) {
+        ++degenerate;
+        continue;
+      }
+
+      const float up = (faceNormal.x * upAxis.x + faceNormal.y * upAxis.y + faceNormal.z * upAxis.z) / length;
+      const float absUp = std::abs(up);
+
+      ++triangles;
+      sumAbsUp += absUp;
+      minAbsUp = std::min(minAbsUp, absUp);
+      maxAbsUp = std::max(maxAbsUp, absUp);
+
+      if (absUp > 0.85f)      ++flat;
+      else if (absUp > 0.50f) ++gentle;
+      else if (absUp > 0.15f) ++steep;
+      else                    ++vertical;
+
+      if (up < -0.15f) {
+        ++facingDown;
+      }
+    }
+
+    if (triangles == 0) {
+      return;
+    }
+
+    const auto percent = [&](uint32_t count) { return 100.f * count / triangles; };
+
+    Logger::info(str::format(
+      "[RTX Terrain Baker] orientation: material 0x", std::hex, drawCallState.getMaterialData().getHash(), std::dec,
+      " tris ", triangles,
+      " | flat ", flat, " (", std::setprecision(3), percent(flat), "%)",
+      " gentle ", gentle, " (", percent(gentle), "%)",
+      " steep ", steep, " (", percent(steep), "%)",
+      " vertical ", vertical, " (", percent(vertical), "%)",
+      " | facingDown ", facingDown,
+      " | absUp min ", minAbsUp, " mean ", static_cast<float>(sumAbsUp / triangles), " max ", maxAbsUp,
+      " | degenerate ", degenerate,
+      " cullMode ", static_cast<uint32_t>(geometry.cullMode),
+      " frontFace ", static_cast<uint32_t>(geometry.frontFace)));
+  }
+
   bool TerrainBaker::bakeDrawCall(Rc<RtxContext> ctx,
                                   const DxvkContextState& dxvkCtxState,
                                   DxvkRaytracingInstanceState& rtState,
@@ -351,6 +454,10 @@ namespace dxvk {
     if (drawCallState.usesVertexShader && !D3D9Rtx::useVertexCapture()) {
       ONCE(Logger::warn(str::format("[RTX Terrain Baker] Terrain texture corresponds to a draw call with programmable Vertex Shader usage. Vertex capture must be enabled to support baking of such draw calls. Ignoring the draw call.")));
       return false;
+    }
+
+    if (logSurfaceOrientation()) {
+      reportSurfaceOrientation(drawCallState);
     }
 
     if (!Material::bakeReplacementMaterials()) {
