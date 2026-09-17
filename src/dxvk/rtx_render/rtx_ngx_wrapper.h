@@ -34,6 +34,7 @@
 #include "../util/rc/util_rc_ptr.h"
 #include "nvsdk_ngx_defs_dlssnr.h"
 #include "rtx_semaphore.h"
+#include "rtx_option.h"
 
 // run DLFG in graphics queue for debugging
 // note that this incurs heavy CPU serialization and is not meant to be used in general
@@ -74,6 +75,16 @@ namespace dxvk {
   class NGXRayReconstructionContext;
   class NGXDLFGContext;
   class NGXNeuralUpliftContext;
+
+  // NGX routes its own diagnostics through a callback supplied at init time. Debug
+  // builds have always taken them; release builds need them too, because NGX is the
+  // only component that can explain why a feature creation was rejected.
+#ifdef NDEBUG
+  constexpr bool kNgxLoggingDefault = false;
+#else
+  constexpr bool kNgxLoggingDefault = true;
+#endif
+
   class NGXContext final {
   public:
     explicit NGXContext(DxvkDevice* device);
@@ -125,6 +136,11 @@ namespace dxvk {
     // here, to keep the wrapper free of the pass's options.
     std::unique_ptr<NGXNeuralUpliftContext> createNeuralUpliftContext(bool bypassCallerCheck);
 
+    RTX_OPTION("rtx", bool, ngxLogging, kNgxLoggingDefault,
+               "Routes NVIDIA NGX's internal log messages into the Remix log, and silences NGX's own logging sinks.\n"
+               "Read once when NGX initializes, so a change needs a restart. On by default in debug builds.\n"
+               "Turn this on to find out why a DLSS, DLSS-RR or DLSS Frame Generation feature failed to be created.");
+    
   private:
     bool initialize();
 

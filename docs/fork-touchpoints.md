@@ -4120,3 +4120,25 @@ consumer of the decomposed basis mirrors, while anything driven by the full matr
 - **src/dxvk/rtx_render/rtx_matrix_helpers.h** - inline tweak (+19 / -1 LOC). *Takes `isLHS` from
   the projection's w-term when it is non-zero, falling back to MathLib's `PROJ_LEFT_HANDED` flag
   for orthographic projections.*
+
+---
+
+## Workstream - NGX device lifetime and logging (local - 2026-09-10)
+
+NGX registers every Vulkan device it is initialized on, and nothing unregisters one. After a game
+recreates its D3D9 device the dead device stays registered, and DLSS Frame Generation can no
+longer infer which device a feature belongs to: frame generation fails for the rest of the
+process, and nothing in the log says why. The shutdown belongs in `DxvkDevice`'s teardown hook,
+which still holds a valid `VkDevice` unlike `~NGXContext`, and must follow the consumers above it.
+
+The second half is the diagnosis path. NGX's own callback is the only thing that explains why a
+feature creation was rejected, and it was compiled in for debug builds only - a release build had
+no way to ask the question at all.
+
+- **src/dxvk/dxvk_device.cpp** - inline tweak (+6 LOC). *Calls `metaNGXContext().shutdown()` from
+  the device teardown hook, after its consumers.*
+- **src/dxvk/rtx_render/rtx_ngx_wrapper.h** - inline tweak (+15 LOC). *`rtx.ngxLogging` and its
+  build-dependent default; includes `rtx_option.h`.*
+- **src/dxvk/rtx_render/rtx_ngx_wrapper.cpp** - inline tweak (+11 / -4 LOC). *Replaces the
+  `#ifndef NDEBUG` guards around the NGX logging callback with the option, so a release build can
+  be asked for the same diagnostics. Read once at NGX init, so a change needs a restart.*
