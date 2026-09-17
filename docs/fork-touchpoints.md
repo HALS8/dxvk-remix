@@ -4098,3 +4098,25 @@ warning raised by fork or upstream code still fails the build.
   which Build Tools SKUs are hidden and a machine carrying only those reports no Visual Studio at
   all, and with `-requires` on the C++ toolset so an install lacking it fails at the lookup rather
   than at the first compile. VS 2026 (18.x) stays deliberately out of the version range.*
+
+---
+
+## Workstream - Reversed-Z projection handedness (local - 2026-08-29)
+
+`decomposeProjection` takes handedness from MathLib, which decides it with `proj.a22 > 0.0f`.
+Reversed-Z negates that term - `m[2][2]` is `zn/(zn-zf)` rather than `zf/(zf-zn)` - so every
+reversed-Z projection is flagged with the wrong handedness. The error is worst where `zf >> zn`
+and the term collapses toward zero: measured on a left-handed reversed-Z title, `m[2][2]` was
+-5e-05 and the projection was flagged right-handed.
+
+The w-term `m[2][3]` is the discriminator reversed-Z leaves alone: +1 for a left-handed D3D
+perspective, -1 for right-handed, and 0 only for an orthographic projection, where MathLib's
+answer still stands.
+
+The symptom is diffuse rather than obvious. A wrong answer negates `RtCamera::getDirection()`
+while leaving `getUp()` and `getRight()` alone, so the free camera's forward axis flips and every
+consumer of the decomposed basis mirrors, while anything driven by the full matrix is unaffected.
+
+- **src/dxvk/rtx_render/rtx_matrix_helpers.h** - inline tweak (+19 / -1 LOC). *Takes `isLHS` from
+  the projection's w-term when it is non-zero, falling back to MathLib's `PROJ_LEFT_HANDED` flag
+  for orthographic projections.*
