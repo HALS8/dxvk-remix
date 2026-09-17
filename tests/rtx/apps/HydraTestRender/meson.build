@@ -155,6 +155,12 @@ hdremix_test_exe = executable(
   hdremix_test_exe_src,
   include_directories: hdremix_includes,
   cpp_args: hdremix_defines + hdremix_compilerflags,
+  # LNK4098 - the prebuilt glfw3 and USD libraries this test app pulls in were built
+  # against a different CRT, so the linker reports a defaultlib conflict. Long-standing
+  # upstream behaviour for this app, and werror=true would otherwise make it fatal.
+  # Deliberately scoped to this one executable: a CRT mismatch anywhere in the runtime is
+  # a real bug and must keep failing the build.
+  link_args: hdremix_cpp_compiler.get_id() == 'msvc' ? ['/IGNORE:4098'] : [],
   dependencies: hdremix_linklibs + hdremix_dxvksdkbuilt + usd_plugin_deps + lib_glfw3,
   override_options: ['cpp_std=c++17'],
   install: true,
