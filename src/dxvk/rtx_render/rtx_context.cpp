@@ -2924,12 +2924,21 @@ namespace dxvk {
       }
     }
 
+    // A terrain draw that is also categorised as a decal contributes to the cascade without
+    // consuming it: the cascade clears every frame and only what bakes writes into it, so a layer
+    // held out of the bake entirely leaves its texels cleared and every surface sampling them
+    // renders black. This keeps the layer's colour in the cascade for the surfaces that do sample
+    // it, while the layer itself keeps its own material and texcoords and composites over the
+    // baked terrain as a decal -- which is the point for a layer the game projects onto a vertical
+    // plane, where the cascade's top-down projection cannot represent it.
+    const bool bakeContributionOnly = drawCallState.testCategoryFlags(DECAL_CATEGORY_FLAGS);
+
     // Bake the material
     const bool isBaked = terrainBaker.bakeDrawCall(this, m_state, m_rtState, params, drawCallState, opaqueReplacementMaterial, transformData.textureTransform);
 
     if (isBaked) {
       // Bind the baked terrain texture to the mesh
-      if (!TerrainBaker::debugDisableBinding()) {
+      if (!TerrainBaker::debugDisableBinding() && !bakeContributionOnly) {
 
         // Set the terrain's baked material data
         *outOverrideMaterialData = terrainBaker.getMaterialData();
@@ -2955,6 +2964,13 @@ namespace dxvk {
           bindResourceView(drawCallState.getMaterialData().colorTextureSlot[0], previousColorView, nullptr);
         }
       }
+    }
+
+    // Dropped after baking, not before: the bake is gated on the category, and everything
+    // downstream should see an ordinary decal rather than a terrain instance carrying its own
+    // material.
+    if (bakeContributionOnly) {
+      drawCallState.removeCategory(InstanceCategories::Terrain);
     }
   }
 
