@@ -14,6 +14,7 @@
 #include "d3d9_rtx_utils.h"
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
+#include "../dxvk/rtx_render/rtx_fork_hooks.h"
 
 #include <cassert>
 #include <cstring>
@@ -763,6 +764,7 @@ namespace dxvk {
     }
 
     m_activeDrawCallState.categories = 0;
+    m_activeDrawCallState.suppressedCategories = m_suppressedCategories;
     m_activeDrawCallState.materialData = {};
 
     // Fetch all the legacy state (colour modes, alpha test, etc...)
@@ -845,6 +847,11 @@ namespace dxvk {
       PrepareDrawFlag::CommitToRayTracing |
       (m_activeDrawCallState.testCategoryFlags(CATEGORIES_REQUIRE_DRAW_CALL_STATE) ? PrepareDrawFlag::ApplyDrawState : 0) |
       (preserveOriginalDraw ? PrepareDrawFlag::PreserveDrawCallAndItsState : 0);
+  }
+
+  void D3D9Rtx::SetSuppressedCategories(uint32_t flags) {
+    m_suppressedCategoryBits = flags;
+    m_suppressedCategories = fork_hooks::toRtCategories(flags);
   }
 
   void D3D9Rtx::triggerInjectRTX() {

@@ -93,6 +93,11 @@ namespace dxvk {
       DrawCallState& drawCall,
       XXH64_hash_t& textureHash);
 
+    // Maps public remixapi_InstanceCategoryBit flags to runtime categories, with the mapping API
+    // instances use. The D3D9 layer needs it for REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES.
+    // Implementation in rtx_remix_api.cpp, beside the mapping, which is local to that file.
+    CategoryFlags toRtCategories(remixapi_InstanceCategoryFlags flags);
+
     // Stores per-draw texture hash metadata in SceneManager::m_drawCallMeta
     // when object picking is active, mirroring the D3D9 draw path.
     // NOTE: requires SceneManager to declare fork_hooks::externalDrawObjectPicking

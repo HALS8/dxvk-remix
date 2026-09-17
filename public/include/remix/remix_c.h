@@ -513,6 +513,24 @@ extern "C" {
 
   typedef uint32_t remixapi_InstanceCategoryFlags;
 
+  // D3D9 per-draw category suppression.
+  //
+  // Texture-hash category lists (rtx.terrainTextures, rtx.decalTextures, ...) apply to every draw
+  // that binds a listed texture, so one texture serving two roles -- a terrain layer that is also
+  // a rock mesh's material -- gives both draws the same categories. A caller that can tell such
+  // draws apart sets this render state before a draw, to a mask of remixapi_InstanceCategoryBit
+  // values the following draws must not take, whatever their textures or geometry are tagged as:
+  //
+  //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES,
+  //                          REMIXAPI_INSTANCE_CATEGORY_BIT_TERRAIN);
+  //
+  // The value lies outside D3D9's render-state range, which D3D9 runtimes ignore. The mask persists
+  // like a render state until set again (0 suppresses nothing) and is cleared by Reset; state
+  // blocks do not capture it, and categories authored on a USD replacement still apply.
+  // GetRenderState returns the current mask; a runtime without this extension fails that call,
+  // which is how a caller detects support.
+  #define REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES 0x52584301u
+
 
   typedef struct remixapi_AnimatedFloat1D {
     float*     pData;

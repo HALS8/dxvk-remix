@@ -364,7 +364,7 @@ namespace dxvk {
   }
 
   void DrawCallState::setCategory(InstanceCategories category, bool doSet) {
-    if (doSet) {
+    if (doSet && !suppressedCategories.test(category)) {
       categories.set(category);
     }
   }
