@@ -1994,6 +1994,11 @@ namespace dxvk {
       return D3D_OK;
     }
 
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_FORCE_CATEGORIES)) {
+      m_rtx.SetForcedCategories(Value);
+      return D3D_OK;
+    }
+
     // D3D9 only allows reading for values 0 and 7-255 so we don't need to do anything but return OK
     if (unlikely(State > 255 || (State < D3DRS_ZENABLE && State != 0))) {
       return D3D_OK;
@@ -2329,6 +2334,11 @@ namespace dxvk {
     // Fork touchpoint: Remix extension outside the range validated below, see remix_c.h.
     if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES)) {
       *pValue = m_rtx.GetSuppressedCategories();
+      return D3D_OK;
+    }
+
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_FORCE_CATEGORIES)) {
+      *pValue = m_rtx.GetForcedCategories();
       return D3D_OK;
     }
 

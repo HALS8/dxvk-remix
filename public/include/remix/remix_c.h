@@ -531,6 +531,22 @@ extern "C" {
   // which is how a caller detects support.
   #define REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES 0x52584301u
 
+  // D3D9 per-draw category assignment.
+  //
+  // The counterpart to suppression: a mask of remixapi_InstanceCategoryBit values the following
+  // draws must take, whatever their textures or geometry are tagged as. It exists for draws whose
+  // category is a property of how the game submitted them rather than of any texture -- a
+  // landscape layer the game projects onto a vertical plane needs to composite over the baked
+  // terrain as a decal, but it shares its texture with the flat layers that must stay terrain.
+  //
+  //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_FORCE_CATEGORIES,
+  //                          REMIXAPI_INSTANCE_CATEGORY_BIT_DECAL_STATIC);
+  //
+  // Suppression wins: a category named in both masks is not taken, so the two can be set
+  // independently without having to reason about their interaction. Same lifetime and detection
+  // rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  #define REMIXAPI_D3D9_RS_FORCE_CATEGORIES 0x52584302u
+
 
   typedef struct remixapi_AnimatedFloat1D {
     float*     pData;
