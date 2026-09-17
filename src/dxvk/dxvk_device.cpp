@@ -611,5 +611,11 @@ namespace dxvk {
     m_dlfg.get().onDestroy();
     m_neuralUplift.get().onDestroy();
     m_fsrFrameGen.get().onDestroy();
+
+    // Must follow its consumers above. NGX registers each Vulkan device it is
+    // initialized on; leaving a dead device registered makes DLSS Frame Generation
+    // fail to infer which device a feature belongs to once a game recreates its
+    // D3D9 device. This hook still holds a valid VkDevice, unlike ~NGXContext.
+    metaNGXContext().shutdown();
   }
 }

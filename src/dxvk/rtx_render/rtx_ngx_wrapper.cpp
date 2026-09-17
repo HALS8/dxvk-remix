@@ -129,25 +129,20 @@ namespace dxvk
     auto instance = m_device->instance();
     VkInstance vkInstance = instance->handle();
 
-    // Note: Enable DLSS logging for debugging in debug mode. Note this will disable all other DLSS logging sinks to ensure all logging
-    // goes through the DXVK logging system.
-#ifndef NDEBUG
-    NVSDK_NGX_FeatureCommonInfo featureCommonInfo{};
+    // NGX's own diagnostics are the only thing that explains why a feature creation
+    // was rejected, so route them into the Remix log and silence NGX's other sinks.
+    // Init copies this block, so a local is enough.
+    NVSDK_NGX_FeatureCommonInfo featureCommonInfo {};
 
     featureCommonInfo.LoggingInfo.LoggingCallback = &NVSDK_NGX_AppLogCallback;
     featureCommonInfo.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
     featureCommonInfo.LoggingInfo.DisableOtherLoggingSinks = true;
-#endif
 
     result = NVSDK_NGX_VULKAN_Init(
       RtxOptions::applicationId(), logFolder.c_str(),
       vkInstance, vkPhysicalDevice, vkDevice,
       nullptr, nullptr,
-#ifndef NDEBUG
-      &featureCommonInfo
-#else
-      nullptr
-#endif
+      ngxLogging() ? &featureCommonInfo : nullptr
     );
 
     if (NVSDK_NGX_FAILED(result)) {
