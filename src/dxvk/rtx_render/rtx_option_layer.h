@@ -261,7 +261,7 @@ namespace dxvk {
     static std::vector<std::string> resolveConfigPaths(const char* envVarName, const char* defaultFileName);
 
     // Create layer(s) from paths that may come from an environment variable
-    // Handles multiple files by creating numbered layers (e.g., "00_rtx.conf", "01_rtx.conf")
+    // Handles multiple files by creating numbered layers (e.g., "Remix Config (01)", "Remix Config")
     // Returns the created layers in order (first file = lowest priority within same SystemLayerPriority)
     static std::vector<RtxOptionLayer*> createLayersFromEnvVar(
         const char* envVarName,
