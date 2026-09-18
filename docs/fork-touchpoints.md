@@ -4254,3 +4254,26 @@ already correct for any input topology. Upstream bug, not reported upstream.
 
 - **src/dxvk/rtx_render/rtx_geometry_utils.cpp** - inline tweak (+12 / -6 LOC). *Gates the smooth
   normals CPU path on an indexed triangle-list input and short-circuits the pending-write checks.*
+
+---
+
+## Workstream - Multi-file conf layer order (local - 2026-09-18)
+
+`DXVK_RTX_CONFIG_FILE` (and `DXVK_CONFIG_FILE`) may name several files, which load as layers
+sharing one priority. The documented contract is that later files are stronger, and the last one is
+the Remix Config layer the menu saves to. `RtxOptionLayerKey` breaks a priority tie by name, with
+the smaller name stronger, and upstream `makeLayerName` gave earlier files a numeric prefix
+(`00_Remix Config`, `01_Remix Config`) while the last kept the bare base name. Digits sort before
+letters, so the order was exactly reversed: the first file was the strongest, and the menu's own
+file was the weakest of the group. A texture tag set in the menu on a hash that another file listed
+was saved but never took effect, and the texture popup marked every such category `[!]`.
+
+Earlier files now get a suffix instead of a prefix, counting up towards the first file
+(`Remix Config (02)`, `Remix Config (01)`, `Remix Config`). A name with a suffix always sorts after
+the bare base name, so the last file is the strongest and later files beat earlier ones, as
+documented. Upstream bug, not reported upstream.
+
+- **src/dxvk/rtx_render/rtx_option_layer.cpp** - inline tweak (+6 / -5 LOC). *`makeLayerName`
+  orders tied layers by suffix so the last file is strongest.*
+- **src/dxvk/rtx_render/rtx_option_layer.h** - inline tweak (1 comment line). *Example layer names
+  in the `createLayersFromEnvVar` declaration.*
