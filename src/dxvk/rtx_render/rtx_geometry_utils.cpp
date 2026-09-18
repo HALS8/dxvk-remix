@@ -1058,13 +1058,19 @@ namespace dxvk {
 
     assert(geo.vertexCount == input.vertexCount);
 
-    // Decide whether to use the CPU path.  The input raster buffers must be host-visible
-    // and not pending GPU write.  For small meshes the CPU path avoids GPU dispatch overhead.
-    const bool mustUseGPU = input.indexBuffer.mapPtr() == nullptr || input.positionBuffer.mapPtr() == nullptr;
-    const bool pendingGpuWrite = input.positionBuffer.isPendingGpuWrite() || input.indexBuffer.isPendingGpuWrite();
-
+    // Decide whether to use the CPU path.  For small meshes it avoids GPU dispatch overhead, but it
+    // reads the raster input directly with triangle-list addressing, so the input must be an indexed
+    // triangle list -- a draw without an index buffer has none to read, and a strip or fan would be
+    // read past its end -- host-visible, and not pending GPU write.  The GPU path reads only the
+    // raytrace geometry, which is always an indexed triangle list.
     const uint32_t kMaxTrianglesForCPU = 512;
-    const bool useCPU = numTriangles <= kMaxTrianglesForCPU && !pendingGpuWrite && !mustUseGPU;
+    const bool inputCpuReadable = input.isTopologyRaytraceReady()
+                               && input.indexBuffer.mapPtr() != nullptr
+                               && input.positionBuffer.mapPtr() != nullptr;
+    const bool useCPU = inputCpuReadable
+                     && numTriangles <= kMaxTrianglesForCPU
+                     && !input.positionBuffer.isPendingGpuWrite()
+                     && !input.indexBuffer.isPendingGpuWrite();
 
     if (useCPU) {
       // --- CPU path: uses the same shared functions as the GPU shader ---

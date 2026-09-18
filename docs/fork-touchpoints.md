@@ -4230,3 +4230,27 @@ level, so the option exists to turn it off.
 - **src/dxvk/rtx_render/rtx_materials.h** - inline tweak (+9 / -1 LOC). *`colorTextureStage`, and a
   bounds check on `getColorTextureSlot`, whose callers now index by stage as well as by texture.*
 - **src/d3d9/d3d9_rtx.cpp** - inline tweak (+2 LOC). *Records the stage the albedo was taken from.*
+
+---
+
+## Workstream - Smooth normals CPU path input guard (local - 2026-09-18)
+
+`RtxGeometryUtils::dispatchSmoothNormals` has a CPU path for meshes of 512 triangles or fewer. It
+reads the draw's raster input directly, addressing it as an indexed triangle list, and takes the
+triangle count from the raytrace geometry. The upstream selection checked only that the input
+buffers were mappable and not pending GPU write, and it evaluated `isPendingGpuWrite()` on the
+input index buffer unconditionally.
+
+A draw without an index buffer therefore dereferenced a null buffer (`GeometryBuffer::
+isPendingGpuWrite` has no null check). That is a crash the first frame any non-indexed draw carries
+the SmoothNormals category, measured as an access violation reading address 0x10 on the CS thread.
+An indexed strip or fan small enough for the CPU path read `(N-2)*3` indices from an N-index
+buffer, past its end.
+
+The CPU path now runs only when the input is an indexed triangle list
+(`isTopologyRaytraceReady`) with mappable buffers, and `isPendingGpuWrite()` is evaluated only after
+that holds. Everything else takes the GPU path, which reads the raytrace geometry only and is
+already correct for any input topology. Upstream bug, not reported upstream.
+
+- **src/dxvk/rtx_render/rtx_geometry_utils.cpp** - inline tweak (+12 / -6 LOC). *Gates the smooth
+  normals CPU path on an indexed triangle-list input and short-circuits the pending-write checks.*
