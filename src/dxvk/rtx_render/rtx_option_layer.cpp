@@ -45,17 +45,18 @@ namespace {
     return result;
   }
 
-  // Helper to create a zero-padded index prefix for layer names when multiple files share a priority
-  // The LAST entry gets no prefix (so layer key lookups still work), earlier entries get prefixed
+  // Names the layers of files that share a priority so that later files are stronger.
+  // RtxOptionLayerKey breaks a priority tie by name, and the smaller name is the stronger layer.
+  // The LAST entry keeps the bare base name (so layer key lookups still work), which a suffix can
+  // only sort after, so earlier entries get a suffix counting up towards the first file,
+  // e.g. for 3 files: "Remix Config (02)", "Remix Config (01)", "Remix Config".
   std::string makeLayerName(size_t index, size_t total, const std::string& baseName) {
     if (total <= 1 || index == total - 1) {
-      // Single entry or last entry - use base name with no prefix
+      // Single entry or last entry - use base name with no suffix
       return baseName;
     }
-    // Earlier entries get 2-digit zero-padded prefix for alphabetical ordering
-    // e.g., for 3 files: "00_rtx.conf", "01_rtx.conf", "rtx.conf"
     std::ostringstream oss;
-    oss << std::setfill('0') << std::setw(2) << index << "_" << baseName;
+    oss << baseName << " (" << std::setfill('0') << std::setw(2) << (total - 1 - index) << ")";
     return oss.str();
   }
 }
