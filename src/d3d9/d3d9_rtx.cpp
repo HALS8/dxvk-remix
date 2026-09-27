@@ -1324,7 +1324,8 @@ namespace dxvk {
         // Flag smooth normals category at the d3d9 layer
         m_activeDrawCallState.setCategory(InstanceCategories::SmoothNormals, lookupHash(RtxOptions::smoothNormalsTextures(), textureHash));
       }
-      if (textureHash != kEmptyHash) {
+      // rtx.trackHashUsageOnlyWhenNeeded: no per-draw command while no hash checker component reads it.
+      if (textureHash != kEmptyHash && SceneManager::s_hashUsageTrackingWanted.load(std::memory_order_relaxed)) {
         m_parent->EmitCs([textureHash](DxvkContext* ctx) {
           static_cast<RtxContext*>(ctx)->getSceneManager().trackReplacementMaterialHash(textureHash);
         });

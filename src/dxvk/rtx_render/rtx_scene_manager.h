@@ -271,6 +271,11 @@ public:
   uint32_t getMeshHashUsageCount(XXH64_hash_t meshHash) const;
   void clearFrameMeshHashes();
 
+  // rtx.trackHashUsageOnlyWhenNeeded: the hash checker components call this when they read the
+  // usage maps; s_hashUsageTrackingWanted (also read by the D3D9 thread) is updated per frame.
+  void noteHashUsageConsumer() const { m_hashUsageConsumerSeen.store(true, std::memory_order_relaxed); }
+  inline static std::atomic<bool> s_hashUsageTrackingWanted { true };
+
   Rc<DxvkSampler> patchSampler( const VkFilter filterMode,
                                 const VkSamplerAddressMode addressModeU,
                                 const VkSamplerAddressMode addressModeV,
@@ -482,6 +487,9 @@ public:
   // RtxContext::commitGeometryToRT around submitDrawState); the preserve path may move from it.
   DrawCallState* m_movableDrawCallState = nullptr;
 private:
+  // rtx.trackHashUsageOnlyWhenNeeded
+  mutable std::atomic<bool> m_hashUsageConsumerSeen { false };
+  uint32_t m_framesSinceHashUsageConsumer = 0;
   std::unique_ptr<WeatherBlender> m_weatherBlender;
 };
 

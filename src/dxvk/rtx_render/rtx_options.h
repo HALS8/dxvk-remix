@@ -1159,6 +1159,11 @@ namespace dxvk {
                "CPU cost (standard D3D9 draw path). The preserve path copies each draw's state into its BLAS entry (twice per\n"
                "replacement mesh). With this on the BLAS entry takes the draw's bone matrices instead of copying them; everything\n"
                "else is still copied (DrawCallState has no move operations). Same state. Off = original behaviour.");
+    RTX_OPTION("rtx", bool, trackHashUsageOnlyWhenNeeded, false,
+               "CPU cost (standard D3D9 draw path). Every draw records its mesh and texture hash in two per-frame maps (cleared\n"
+               "every frame, so a node allocation per draw) that only the graph components Mesh Hash Checker and Texture Hash\n"
+               "Checker read. With this on the recording (and the D3D9 thread's per-draw command for it) is skipped while no such\n"
+               "component has run for 2 frames. When a checker first appears it sees an empty frame once. Off = original behaviour.");
     // Store the computed value separately from the user preference.  This enables changing it immediately when needed,
     // and lets us store the final value to be used by the game.
     public: inline static EnableVsync enableVsyncState = EnableVsync::WaitingForImplicitSwapchain;
