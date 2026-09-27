@@ -1142,6 +1142,19 @@ namespace dxvk {
                     "Note that this option when set to false will prevent Reflex from even attempting to initialize, unlike setting the Reflex mode to \"None\" which simply tells an initialized Reflex not to take effect.\n"
                     "Additionally, this setting must be set at startup and changing it will not take effect at runtime.");
 
+    public: static void lockFreeOptionReadsOnChange(DxvkDevice* device);
+    RTX_OPTION_ARGS("rtx", bool, lockFreeOptionReads, false,
+               "CPU cost (standard D3D9 draw path). getValue() / containsHash() of non-scalar options -- texture hash sets\n"
+               "(rtx.decalTextures, rtx.ignoreTextures, ...), vectors and strings -- skip the global option mutex. The standard D3D9\n"
+               "path reads about 30 hash-set options per ray traced draw (texture categories) and each read locked the global option\n"
+               "mutex that the CS thread and the geometry workers also take. The lock was released before the caller used the returned\n"
+               "reference, so it never protected the read; skipping it gives the same values. Off = original behaviour.",
+               args.onChangeCallback = &lockFreeOptionReadsOnChange);
+    RTX_OPTION("rtx", bool, textureCategoryCache, false,
+               "CPU cost (standard D3D9 draw path). Caches, per texture hash, the result of every texture-list lookup a draw call\n"
+               "makes (the ~25 category lists such as rtx.decalTextures / rtx.particleTextures / rtx.ignoreTextures, plus\n"
+               "lightmap, ignore-baked-lighting, smooth-normals and UI), so a draw does one hash lookup per bound texture instead of\n"
+               "~30 option reads. The cache is dropped whenever any option value changes. Same categories. Off = original behaviour.");
     // Store the computed value separately from the user preference.  This enables changing it immediately when needed,
     // and lets us store the final value to be used by the game.
     public: inline static EnableVsync enableVsyncState = EnableVsync::WaitingForImplicitSwapchain;

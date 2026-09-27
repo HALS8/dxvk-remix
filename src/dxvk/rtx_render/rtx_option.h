@@ -51,6 +51,15 @@ class RtxOptionManager;
 #endif
 
 namespace dxvk {
+  // rtx.lockFreeOptionReads (set by its on-change callback): getValue() / containsHash() of non-scalar
+  // options -- the texture hash sets read per draw call, vectors and strings -- skip the global option
+  // mutex. The getter returns a reference into the resolved value that every caller reads after the
+  // lock has been released, so the lock never covered the read. Off by default.
+  inline std::atomic<bool> g_rtxOptionLockFreeAllReads { false };
+  // Bumped (release) every time an option's resolved value changes (RtxOptionImpl::resolveValue),
+  // after the new value is in place. Caches derived from option values (rtx.textureCategoryCache)
+  // compare it to know when to rebuild.
+  inline std::atomic<uint64_t> g_rtxOptionResolveGeneration { 0 };
   class DxvkDevice;
 
   // RtxOption refers to a serializable option, which can be of a basic type (i.e. int) or a class type (i.e. vector hash value)
@@ -466,6 +475,10 @@ namespace dxvk {
 
     template<typename = std::enable_if_t<std::is_same_v<T, fast_unordered_set>>>
     bool containsHash(const XXH64_hash_t& value) const {
+      if (g_rtxOptionLockFreeAllReads.load(std::memory_order_relaxed)) {
+        tagInvalidationScope();
+        return m_resolvedValue.hashSet->count(value) > 0;
+      }
       std::lock_guard<std::mutex> lock(RtxOptionImpl::getUpdateMutex());
       tagInvalidationScope();
       return m_resolvedValue.hashSet->count(value) > 0;
@@ -631,6 +644,15 @@ namespace dxvk {
     }
 
     const T& getValue() const {
+      if constexpr (!(std::is_arithmetic_v<T> || std::is_enum_v<T>)) {
+        // rtx.lockFreeOptionReads: non-scalar types (hash sets, vectors, strings). The lock was released
+        // before the caller used the returned reference, so it never covered the read.
+        if (g_rtxOptionLockFreeAllReads.load(std::memory_order_relaxed)) {
+          assert(RtxOptionImpl::isInitialized() && "Trying to access an RtxOption before the config files have been loaded.");
+          tagInvalidationScope();
+          return *getResolvedValuePtr<T>();
+        }
+      }
       std::lock_guard<std::mutex> lock(RtxOptionImpl::getUpdateMutex());
       assert(RtxOptionImpl::isInitialized() && "Trying to access an RtxOption before the config files have been loaded.");
       tagInvalidationScope();

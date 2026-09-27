@@ -115,6 +115,10 @@ namespace dxvk {
       return true;
     }
   }
+  void RtxOptions::lockFreeOptionReadsOnChange(DxvkDevice* device) {
+    g_rtxOptionLockFreeAllReads.store(lockFreeOptionReads(), std::memory_order_relaxed);
+  }
+
   void RtxOptions::dynamicDecalTexturesOnChange(DxvkDevice* device) {
     if (dynamicDecalTextures.migrateValuesTo(&decalTextures, migrateHashSet)) {
       dynamicDecalTextures.clearFromStrongerLayers(RtxOptionLayer::getDefaultLayer());

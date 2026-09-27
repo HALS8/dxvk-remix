@@ -288,9 +288,12 @@ namespace dxvk {
         break;
       case D3DDECLUSAGE_COLOR:
         if (element.UsageIndex == 0 &&
-            !RtxOptions::ignoreAllVertexColorBakedLighting() &&
-            !lookupHash(RtxOptions::ignoreBakedLightingTextures(), m_activeDrawCallState.materialData.colorTextures[0].getImageHash())) {
-          targetBuffer = &geoData.color0Buffer;
+            !RtxOptions::ignoreAllVertexColorBakedLighting()) {
+          const XXH64_hash_t colorHash = m_activeDrawCallState.materialData.colorTextures[0].getImageHash();
+          const TextureListInfo* pTexLists = getTextureListInfo(colorHash); // rtx.textureCategoryCache (nullptr = off)
+          if (!(pTexLists ? pTexLists->ignoreBakedLighting : lookupHash(RtxOptions::ignoreBakedLightingTextures(), colorHash))) {
+            targetBuffer = &geoData.color0Buffer;
+          }
         }
         break;
       }
@@ -578,7 +581,61 @@ namespace dxvk {
     }
 
     // Check if UI texture bound
+    if (RtxOptions::textureCategoryCache()) {
+      // rtx.textureCategoryCache: same loop as checkBoundTextureCategory(), cached lookup.
+      const uint32_t usedSamplerMask = m_parent->m_psShaderMasks.samplerMask | m_parent->m_vsShaderMasks.samplerMask;
+      const uint32_t usedTextureMask = m_parent->m_activeTextures & usedSamplerMask;
+      for (uint32_t idx : bit::BitMask(usedTextureMask)) {
+        if (!d3d9State().textures[idx]) {
+          continue;
+        }
+        const XXH64_hash_t texHash = GetCommonTexture(d3d9State().textures[idx])->GetSampleView(false)->image()->getHash();
+        const TextureListInfo* pTexLists = getTextureListInfo(texHash);
+        if (pTexLists != nullptr && pTexLists->ui) {
+          return true;
+        }
+      }
+      return false;
+    }
     return checkBoundTextureCategory(RtxOptions::uiTextures());
+  }
+
+  const D3D9Rtx::TextureListInfo* D3D9Rtx::getTextureListInfo(const XXH64_hash_t& textureHash) {
+    if (!RtxOptions::textureCategoryCache()) {
+      if (!m_textureListCache.empty()) {
+        m_textureListCache.clear();
+      }
+      return nullptr;
+    }
+
+    // Any option value change bumps the generation (after the new value is in place): rebuild lazily.
+    const uint64_t generation = g_rtxOptionResolveGeneration.load(std::memory_order_acquire);
+    if (generation != m_textureListCacheGeneration) {
+      if (!m_textureListCache.empty()) {
+        m_textureListCache.clear();
+      }
+      m_textureListCacheGeneration = generation;
+    }
+
+    auto it = m_textureListCache.find(textureHash);
+    if (it != m_textureListCache.end()) {
+      return &it->second;
+    }
+
+    // Bounded: a game streaming unique textures forever cannot grow this without limit.
+    if (m_textureListCache.size() >= kMaxTextureListCacheEntries) {
+      m_textureListCache.clear();
+    }
+
+    TextureListInfo info;
+    info.categories = DrawCallState::computeTextureListCategories(textureHash);
+    if (lookupHash(RtxOptions::smoothNormalsTextures(), textureHash)) {
+      info.categories.set(InstanceCategories::SmoothNormals);
+    }
+    info.lightmap = lookupHash(RtxOptions::lightmapTextures(), textureHash);
+    info.ignoreBakedLighting = lookupHash(RtxOptions::ignoreBakedLightingTextures(), textureHash);
+    info.ui = lookupHash(RtxOptions::uiTextures(), textureHash);
+    return &m_textureListCache.emplace(textureHash, info).first->second;
   }
 
   XXH64_hash_t D3D9Rtx::buildGeometryHashMemoizationKey(const RasterGeometry& geoData,
@@ -1118,9 +1175,10 @@ namespace dxvk {
         }
 
         const XXH64_hash_t texHash = texture->GetSampleView(true)->image()->getHash();
+        const TextureListInfo* pTexLists = getTextureListInfo(texHash); // rtx.textureCategoryCache (nullptr = off)
 
         // Currently we only support regular textures, skip lightmaps.
-        if (lookupHash(RtxOptions::lightmapTextures(), texHash)) {
+        if (pTexLists ? pTexLists->lightmap : lookupHash(RtxOptions::lightmapTextures(), texHash)) {
           continue;
         }
 
@@ -1140,7 +1198,7 @@ namespace dxvk {
 
         // Check if texture factor blending is enabled
         if (isCurrentStageTextureFactorBlendingEnabled &&
-            lookupHash(RtxOptions::ignoreBakedLightingTextures(), texHash)) {
+            (pTexLists ? pTexLists->ignoreBakedLighting : lookupHash(RtxOptions::ignoreBakedLightingTextures(), texHash))) {
           useStageTextureFactorBlending = false;
           useMultipleStageTextureFactorBlending = false;
         }
@@ -1200,14 +1258,19 @@ namespace dxvk {
                          m_activeDrawCallState.materialData, m_activeDrawCallState.transformData);
 
     if (d3d9State().textures[firstStage]) {
-      m_activeDrawCallState.setupCategoriesForTexture();
-
       // Track the texture hash before checking if it should be ignored
       // This ensures we track all textures sent by the game, not just the ones that are actually rendered.
       const XXH64_hash_t textureHash = m_activeDrawCallState.materialData.getColorTexture().getImageHash();
 
-      // Flag smooth normals category at the d3d9 layer
-      m_activeDrawCallState.setCategory(InstanceCategories::SmoothNormals, lookupHash(RtxOptions::smoothNormalsTextures(), textureHash));
+      // rtx.textureCategoryCache: the cached categories include the SmoothNormals bit.
+      if (const TextureListInfo* pTexLists = getTextureListInfo(textureHash)) {
+        m_activeDrawCallState.setupCategoriesForTexture(&pTexLists->categories);
+      } else {
+        m_activeDrawCallState.setupCategoriesForTexture();
+
+        // Flag smooth normals category at the d3d9 layer
+        m_activeDrawCallState.setCategory(InstanceCategories::SmoothNormals, lookupHash(RtxOptions::smoothNormalsTextures(), textureHash));
+      }
       if (textureHash != kEmptyHash) {
         m_parent->EmitCs([textureHash](DxvkContext* ctx) {
           static_cast<RtxContext*>(ctx)->getSceneManager().trackReplacementMaterialHash(textureHash);

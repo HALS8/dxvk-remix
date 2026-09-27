@@ -4078,6 +4078,11 @@ namespace dxvk {
       RemixGui::Checkbox("Force Merge All Meshes", &RtxOptions::forceMergeAllMeshesObject());
       RemixGui::Checkbox("Minimize BLAS Merging", &RtxOptions::minimizeBlasMergingObject());
       RemixGui::Separator();
+      // Standard D3D9 draw path CPU options. All off by default.
+      ImGui::TextUnformatted("D3D9 Draw Path (CPU)");
+      RemixGui::Checkbox("D3D9: Lock-Free Reads of All Option Types", &RtxOptions::lockFreeOptionReadsObject());
+      RemixGui::Checkbox("D3D9: Cache Texture Category Lookups", &RtxOptions::textureCategoryCacheObject());
+      RemixGui::Separator();
       RemixGui::Checkbox("Portals: Virtual Instance Matching", &RtxOptions::useRayPortalVirtualInstanceMatchingObject());
       RemixGui::Checkbox("Portals: Fade In Effect", &RtxOptions::enablePortalFadeInEffectObject());
       ImGui::Unindent();

@@ -763,7 +763,10 @@ struct DrawCallState {
   // since it may be world geometry that should go through reprojection instead.
   bool skyAutoDetected = false;
 
-  void setupCategoriesForTexture();
+  // pCachedTextureListCategories: computeTextureListCategories() of the color texture hash, when the
+  // caller has it cached (rtx.textureCategoryCache); nullptr = look the lists up now.
+  void setupCategoriesForTexture(const CategoryFlags* pCachedTextureListCategories = nullptr);
+  static CategoryFlags computeTextureListCategories(const XXH64_hash_t& textureHash);
   void setupCategoriesForGeometry();
   void setupCategoriesForHeuristics(uint32_t prevFrameSeenCamerasCount,
                                     std::vector<Vector3>& seenCameraPositions);

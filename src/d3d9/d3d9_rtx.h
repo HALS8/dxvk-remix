@@ -238,6 +238,18 @@ namespace dxvk {
     uint32_t m_geometryHashCacheHits = 0;
     uint32_t m_geometryHashCacheMisses = 0;
 
+    // rtx.textureCategoryCache: every texture-list lookup a draw makes for one texture hash.
+    struct TextureListInfo {
+      CategoryFlags categories = 0;     // DrawCallState::computeTextureListCategories() + SmoothNormals
+      bool lightmap = false;            // rtx.lightmapTextures
+      bool ignoreBakedLighting = false; // rtx.ignoreBakedLightingTextures
+      bool ui = false;                  // rtx.uiTextures
+    };
+    static constexpr size_t kMaxTextureListCacheEntries = 65536;
+    fast_unordered_cache<TextureListInfo> m_textureListCache;
+    uint64_t m_textureListCacheGeneration = ~0ull;
+    // nullptr when rtx.textureCategoryCache is off. The pointer is valid until the next call.
+    const TextureListInfo* getTextureListInfo(const XXH64_hash_t& textureHash);
     // NOTE: to avoid calculating matrix inverse,
     //       m_seenCameraPositions doesn't contain the actual positions,
     //       but only relative values, see USE_TRUE_CAMERA_POSITION_FOR_COMPARISON
