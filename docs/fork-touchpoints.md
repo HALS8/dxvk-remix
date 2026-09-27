@@ -4348,3 +4348,16 @@ sampling error averages out under the upsample instead of shimmering.
 - **The resolve writes `m_postFxIntermediateTexture` and copies back**, as
   `dispatchLensEffects` does, because it now reads `m_finalOutput` as well as
   writing it and a single `AliasedResource` cannot be both.
+
+## Workstream - volumetrics froxel cache gating (fork - 2026-09-24)
+
+Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches fo4/gpu-opt and fo4/gating).
+
+### Volumetrics disabled = zero cost
+
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `rtx.volumetrics.keepRadianceCacheWhenDisabled` option
+  (default off), `isFroxelCacheActive()`, `m_froxelCacheActive` / `m_froxelCacheHistoryStale`; `enable`
+  description updated.
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `onFrameBegin` latches the gate; `dispatch` returns
+  early when the cache is inactive; `getVolumeArgs` zeroes `volumetricConsumerGain` on skipped frames and
+  resets history / temporal resampling on the first frame back; dev-menu checkbox under Volumetric Lighting.

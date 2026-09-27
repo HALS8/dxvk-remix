@@ -137,8 +137,16 @@ struct WeatherSnapshot;
     RTX_OPTION_FLAG("rtx.volumetrics", bool, enableReferenceMode, false, RtxOptionFlags::NoSave, "Enables reference mode for volumetrics.  This is very expensive, but allows for rendering engineers to test how close sampling approximations are to the real thing. This will not save.");
     RTX_OPTION_ARGS("rtx.volumetrics", bool, enable, true,
                "Enabling volumetric lighting provides higher quality ray traced physical volumetrics, disabling falls back to cheaper depth based fog.\n"
-               "Note that disabling this option does not disable the froxel radiance cache as a whole as it is still needed for other non-volumetric lighting approximations.",
+               "Note that disabling this option also skips the froxel radiance cache passes (fork, fo4/gpu-opt) unless rtx.volumetrics.keepRadianceCacheWhenDisabled is set; "
+               "the cache's only remaining readers (evalVolumetricNEE surface consumers) then read zero.",
                args.flags = RtxOptionFlags::UserSetting);
+    // Fork (fo4/gpu-opt): escape hatch for the "disabled = zero cost" gate in RtxGlobalVolumetrics::dispatch.
+    RTX_OPTION("rtx.volumetrics", bool, keepRadianceCacheWhenDisabled, false,
+               "Keep building the froxel radiance cache (the five Volume Integrate compute passes) while rtx.volumetrics.enable is off.\n"
+               "Off (default): disabling volumetrics costs nothing on the GPU, and the surface consumers of the cache "
+               "(opacity-lighting-approximated particles, decal/PSR diffuse approximation, stochastic alpha blend radiance-volume "
+               "fallback, dust particles) receive no cache contribution (volumetricConsumerGain is forced to 0 for the frame).\n"
+               "On: upstream behaviour, the cache is rebuilt every frame so those consumers keep their (volumetricConsumerGain-scaled) tint.");
     RTX_OPTION("rtx.volumetrics", bool, enableTranslucentShadows, false,
                "Calculate coloured shadows from translucent materials (i.e. glass, water) in volumetric lighting. In engineering terms: include OBJECT_MASK_TRANSLUCENT into volumetric visibility rays.");
     RTX_OPTION_ARGS("rtx.volumetrics", Vector3, transmittanceColor, Vector3(0.995f, 0.995f, 0.995f),
@@ -281,7 +289,10 @@ struct WeatherSnapshot;
     }
 
     void dispatch(class RtxContext* ctx, const Resources::RaytracingOutput& rtOutput, uint32_t numActiveFroxelVolumes);
-    
+
+    // Fork (fo4/gpu-opt): whether the froxel radiance cache is built this frame (latched in onFrameBegin).
+    bool isFroxelCacheActive() const { return m_froxelCacheActive; }
+
     const Resources::Resource& getCurrentVolumeReservoirs() const { return m_volumeReservoirs[0]; }
     const Resources::Resource& getPreviousVolumeReservoirs() const { return m_volumeReservoirs[1]; }
     const Resources::Resource& getCurrentVolumeAccumulatedRadianceY() const { return m_volumeAccumulatedRadianceY[m_swapTextures]; }
@@ -314,6 +325,11 @@ struct WeatherSnapshot;
     Resources::Resource m_volumeAccumulatedRadianceAge[2];
     bool m_swapTextures = false;
     bool m_rebuildFroxels = false;
+    // Fork (fo4/gpu-opt): per-frame latch of whether the froxel cache passes run (see onFrameBegin).
+    // m_froxelCacheHistoryStale is set on the first frame the cache runs after one or more skipped
+    // frames, so that frame drops the stale accumulation/reservoir history like a camera cut.
+    bool m_froxelCacheActive = true;
+    bool m_froxelCacheHistoryStale = false;
 
     // Per-frame weather snapshot override. Set once per frame
     // by applyWeatherOverride() (called from rtx_context.cpp before

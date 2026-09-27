@@ -356,6 +356,10 @@ namespace dxvk {
       ImGui::Indent();
 
       RemixGui::Checkbox("Enable Volumetric Lighting", &enableObject());
+      // Fork (fo4/gpu-opt): only meaningful while volumetrics are off.
+      ImGui::BeginDisabled(enable());
+      RemixGui::Checkbox("Keep Froxel Cache When Disabled", &keepRadianceCacheWhenDisabledObject());
+      ImGui::EndDisabled();
       {
         ImGui::Indent();
         ImGui::BeginDisabled(!enable());
@@ -820,10 +824,31 @@ namespace dxvk {
     // Note: We need to invalidate the volumetric history buffers (radiance and age buffers) when detecting camera cut to avoid accumulating the history from different scenes
     volumeArgs.resetHistory = isViewHistoryInvalidated;
 
+    // Fork (fo4/gpu-opt): froxel cache gate. When the cache passes are skipped this frame nothing
+    // refreshes the froxel textures, so the surface consumers (evalVolumetricNEE, which multiplies by
+    // this gain) must read zero rather than a frozen cache. On the first frame the cache runs again
+    // its radiance/age/reservoir history is from before the gap, so treat it like a camera cut.
+    // Both branches are no-ops while rtx.volumetrics.enable is on (the cache never skips then).
+    if (!m_froxelCacheActive) {
+      volumeArgs.volumetricConsumerGain = 0.0f;
+    } else if (m_froxelCacheHistoryStale) {
+      volumeArgs.resetHistory = true;
+      volumeArgs.enableVolumeTemporalResampling = false;
+    }
+
     return volumeArgs;
   }
 
   void RtxGlobalVolumetrics::dispatch(RtxContext* ctx, const Resources::RaytracingOutput& rtOutput, uint32_t numActiveFroxelVolumes) {
+    // Fork (fo4/gpu-opt): "volumetrics disabled" used to still run all five froxel passes below
+    // (isEnabled() is hard-wired true, and nothing else gated this call) - measured at ~4.2 ms p50 in
+    // the FO4 run31 [PerfGpu] "Volumetrics" stage with rtx.volumetrics.enable = False. With volumetrics
+    // off the only readers left are the evalVolumetricNEE surface consumers, which getVolumeArgs zeroes
+    // for skipped frames; rtx.volumetrics.keepRadianceCacheWhenDisabled restores the old behaviour.
+    if (!m_froxelCacheActive) {
+      return;
+    }
+
     // Bind resources
 
     ctx->bindCommonRayTracingResources(rtOutput);
@@ -954,6 +979,12 @@ namespace dxvk {
     RtxPass::onFrameBegin(ctx, frameBeginCtx);
 
     m_swapTextures = !m_swapTextures;
+
+    // Fork (fo4/gpu-opt): latch the froxel cache gate once per frame (ImGui can flip the options
+    // mid-frame; getVolumeArgs and dispatch must agree).
+    const bool cacheActive = enable() || keepRadianceCacheWhenDisabled();
+    m_froxelCacheHistoryStale = cacheActive && !m_froxelCacheActive;
+    m_froxelCacheActive = cacheActive;
 
     if (m_rebuildFroxels) {
       createDownscaledResource(ctx, frameBeginCtx.downscaledExtent);
