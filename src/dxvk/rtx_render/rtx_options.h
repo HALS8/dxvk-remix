@@ -1155,6 +1155,10 @@ namespace dxvk {
                "makes (the ~25 category lists such as rtx.decalTextures / rtx.particleTextures / rtx.ignoreTextures, plus\n"
                "lightmap, ignore-baked-lighting, smooth-normals and UI), so a draw does one hash lookup per bound texture instead of\n"
                "~30 option reads. The cache is dropped whenever any option value changes. Same categories. Off = original behaviour.");
+    RTX_OPTION("rtx", bool, preserveMoveDrawState, false,
+               "CPU cost (standard D3D9 draw path). The preserve path copies each draw's state into its BLAS entry (twice per\n"
+               "replacement mesh). With this on the BLAS entry takes the draw's bone matrices instead of copying them; everything\n"
+               "else is still copied (DrawCallState has no move operations). Same state. Off = original behaviour.");
     // Store the computed value separately from the user preference.  This enables changing it immediately when needed,
     // and lets us store the final value to be used by the game.
     public: inline static EnableVsync enableVsyncState = EnableVsync::WaitingForImplicitSwapchain;

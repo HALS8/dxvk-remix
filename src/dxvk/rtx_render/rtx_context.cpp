@@ -1079,7 +1079,12 @@ namespace dxvk {
         }
       }
 
-      getSceneManager().submitDrawState(this, drawCallState, overrideMaterialData);
+      // rtx.preserveMoveDrawState: this state is ours and dropped after the submit, so the preserve
+      // path may move it into its BlasEntry instead of copying it.
+      SceneManager& sceneManager = getSceneManager();
+      sceneManager.m_movableDrawCallState = RtxOptions::preserveMoveDrawState() ? &drawCallState : nullptr;
+      sceneManager.submitDrawState(this, drawCallState, overrideMaterialData);
+      sceneManager.m_movableDrawCallState = nullptr;
     }
   }
 

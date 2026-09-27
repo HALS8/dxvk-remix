@@ -4091,6 +4091,7 @@ namespace dxvk {
       RemixGui::DragInt("D3D9: Self-Check Memoized Hashes Every N Frames (0 = off)", &D3D9Rtx::geometryHashMemoSelfCheckFramesObject(), 1.f, 0, 100000);
       RemixGui::Checkbox("D3D9: Cache Vertex Shader Bytecode Hash", &D3D9Rtx::cacheShaderBytecodeHashObject());
       RemixGui::Checkbox("D3D9: Pool Vertex Capture Buffers", &D3D9Rtx::poolVertexCaptureBuffersObject());
+      RemixGui::Checkbox("D3D9: Preserve Path Takes Bone Matrices (no copy)", &RtxOptions::preserveMoveDrawStateObject());
       RemixGui::Separator();
       RemixGui::Checkbox("Portals: Virtual Instance Matching", &RtxOptions::useRayPortalVirtualInstanceMatchingObject());
       RemixGui::Checkbox("Portals: Fade In Effect", &RtxOptions::enablePortalFadeInEffectObject());
