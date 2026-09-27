@@ -272,16 +272,24 @@ namespace dxvk {
         if (selfCheck) {
           // The fresh hash must equal the memoized one; a mismatch means a buffer write that did not
           // bump remixContentVersion (the memo would have served a stale hash). The entry is replaced below.
+          // Compare the hash components only: GeometryHashes::precombined[3/4] are left uninitialized when
+          // the legacy components are empty, so a whole-struct memcmp reports false mismatches.
           auto it = m_geometryHashCache.find(memoizationKey);
-          if (it != m_geometryHashCache.end() && std::memcmp(&it->second, &hashes, sizeof(GeometryHashes)) != 0) {
-            static std::atomic<uint32_t> s_mismatchLogs { 0 };
-            if (s_mismatchLogs.fetch_add(1, std::memory_order_relaxed) < 20) {
-              Logger::warn(str::format("[GeometryHashMemoCheck] memoized geometry hash is stale: key ", std::hex, memoizationKey,
-                                       " memoized positions ", it->second[HashComponents::VertexPosition],
-                                       " indices ", it->second[HashComponents::Indices],
-                                       ", fresh positions ", hashes[HashComponents::VertexPosition],
-                                       " indices ", hashes[HashComponents::Indices],
-                                       " (first 20 mismatches are logged)"));
+          if (it != m_geometryHashCache.end()) {
+            std::string differing;
+            for (uint32_t i = 0; i < (uint32_t) HashComponents::Count; i++) {
+              const HashComponents component = (HashComponents) i;
+              if (it->second[component] != hashes[component]) {
+                differing += str::format(differing.empty() ? "" : ", ", getHashComponentName(component), " ",
+                                         std::hex, it->second[component], " -> ", hashes[component]);
+              }
+            }
+            if (!differing.empty()) {
+              static std::atomic<uint32_t> s_mismatchLogs { 0 };
+              if (s_mismatchLogs.fetch_add(1, std::memory_order_relaxed) < 20) {
+                Logger::warn(str::format("[GeometryHashMemoCheck] memoized geometry hash is stale: key ", std::hex, memoizationKey,
+                                         " | ", differing, " (first 20 mismatches are logged)"));
+              }
             }
           }
         }
