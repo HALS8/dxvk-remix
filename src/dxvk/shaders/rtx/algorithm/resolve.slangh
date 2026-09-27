@@ -161,7 +161,13 @@ bool evaluateOpaqueApproximations(
   // Note: Only perform the lighting approximation on particles using opacity, not just every surface using opacity.
   const bool opacityLightingApprox = surface.isParticle || packedFlagGet(resolveMode, resolveModeForceOpacityLightingApprox);
 
-  if (opacityLightingApprox)
+  // Fork (d3d9/alpha-gpu): rtx.particleSkipZeroAlbedoLighting. Both lighting terms below are multiplied by the
+  // (opacity-adjusted) albedo, so a texel with zero albedo adds exactly 0 (the froxel cache and the sky LUTs hold
+  // finite values); skip their texture reads. The attenuation/emission approximation further down still runs.
+  const bool skipZeroAlbedoLighting =
+    cb.particleSkipZeroAlbedoLighting != 0 && all(opaqueSurfaceMaterialInteraction.albedo == vec3(0.0f));
+
+  if (opacityLightingApprox && !skipZeroAlbedoLighting)
   {
     const uint froxelVolumeHint = portalSpaceToVolumeHint(portalSpace);
 
