@@ -431,6 +431,21 @@ namespace dxvk {
     static bool useStagingNumTexelsPerMicroTriangleObject(const RtInstance& instance);
     static XXH64_hash_t getOpacityMicromapHash(const RtInstance& instance);
 
+    // Fork (d3d9/alpha-gpu): rtx.opacityMicromap.bindSharedBlas. Whether one micromap is valid for every instance
+    // of a per-geometry BLAS they share. The micromap is baked into the BLAS, so it is applied to all of them:
+    // that is only the same result as a per-instance micromap when every instance uses micromaps and would request
+    // the very same one (equal OMM source hash: material, alpha state, texture stage ops, tFactor alpha, texture
+    // transform, texcoords, indices, triangle count and format), and only 4-state ones are accepted (unknown
+    // micro-triangles keep the exact alpha test).
+    enum class SharedBlasOmm : uint8_t {
+      NoUsers,      // no instance uses micromaps (or micromaps unavailable): nothing to bind
+      Compatible,   // all instances request the same 4-state micromap
+      MixedUsers,   // some instances use micromaps, others do not
+      HashMismatch, // instances request different micromaps
+      TwoState      // same micromap, but 2-state: not bound (it would drop unknown texels from the alpha test)
+    };
+    SharedBlasOmm checkSharedBlasOmm(const std::vector<RtInstance*>& instances, const InstanceManager& instanceManager) const;
+
     // Internal use only
     void onInstanceUnlinked(const RtInstance& instance);
 

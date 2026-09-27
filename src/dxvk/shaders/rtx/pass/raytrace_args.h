@@ -441,6 +441,9 @@ struct RaytraceArgs {
   // END of the struct so no existing field offsets move.
   float particleSkyAmbientScale;
 
+  // Fork (d3d9/alpha-gpu): see rtx_fork_d3d9_alpha.h. particleSkipZeroAlbedoLighting: the particle
+  // lighting approximation skips texels with zero albedo.
+  uint particleSkipZeroAlbedoLighting;
   // NOTE: Add structs to the top section of RaytraceArgs, not the bottom.
   // NOTE: bool does not work in debug builds, use uint instead.
 };

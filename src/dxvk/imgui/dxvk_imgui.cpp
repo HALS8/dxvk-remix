@@ -77,6 +77,7 @@
 #include "rtx_render/rtx_point_instancer_system.h"
 #include "rtx_render/rtx_overlay_window.h"
 #include "rtx_render/rtx_fork_hooks.h"
+#include "rtx_render/rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
 // NV-DXVK start: Numos native weather UI
 #include "rtx_render/rtx_weather.h"
 // NV-DXVK end
@@ -3788,6 +3789,9 @@ namespace dxvk {
         }
         ImGui::Unindent();
       }
+
+      // Fork (d3d9/alpha-gpu): alpha-tested / blended content and replacement assets (rtx_fork_d3d9_alpha.h).
+      D3d9Alpha::showImguiSettings();
 
       const VkPhysicalDeviceProperties& props = m_device->adapter()->deviceProperties();
       const NV_GPU_ARCHITECTURE_ID archId = RtxOptions::getNvidiaArch();

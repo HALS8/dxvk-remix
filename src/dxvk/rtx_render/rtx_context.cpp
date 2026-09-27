@@ -39,6 +39,7 @@
 #include "rtx_neural_radiance_cache.h"
 #include "rtx_sharc.h"
 #include "rtx_fork_hooks.h"
+#include "rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
 #include "rtx_ray_reconstruction.h"
 #include "rtx_xess.h"
 #include "rtx_rtxdi_rayquery.h"
@@ -1159,6 +1160,8 @@ namespace dxvk {
     constants.primaryRayMaxInteractions = RtxOptions::primaryRayMaxInteractions();
     constants.psrRayMaxInteractions = RtxOptions::psrRayMaxInteractions();
     constants.secondaryRayMaxInteractions = RtxOptions::secondaryRayMaxInteractions();
+    // Fork (d3d9/alpha-gpu): rtx.particleSkipZeroAlbedoLighting.
+    D3d9Alpha::setRaytraceArgs(constants);
 
     // Todo: Potentially move this to the volume manager in the future to be more organized.
     constants.volumeTemporalReuseMaxSampleCount = RtxGlobalVolumetrics::temporalReuseMaxSampleCount();

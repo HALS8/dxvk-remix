@@ -1575,6 +1575,59 @@ namespace dxvk {
     return true;
   }
 
+  // Fork (d3d9/alpha-gpu): rtx.opacityMicromap.bindSharedBlas, see the declaration.
+  OpacityMicromapManager::SharedBlasOmm OpacityMicromapManager::checkSharedBlasOmm(const std::vector<RtInstance*>& instances,
+                                                                                   const InstanceManager& instanceManager) const {
+    // The conditions under which tryBindOpacityMicromap returns before building its request.
+    if (m_memoryManager.getBudget() == 0 || !OpacityMicromapOptions::enableBinding()) {
+      return SharedBlasOmm::NoUsers;
+    }
+
+    uint32_t users = 0;
+    for (const RtInstance* instance : instances) {
+      users += usesOpacityMicromap(*instance) ? 1 : 0;
+    }
+    if (users == 0) {
+      return SharedBlasOmm::NoUsers;
+    }
+    if (users != instances.size()) {
+      return SharedBlasOmm::MixedUsers;
+    }
+
+    // Fresh requests, as the bind builds them: the per-instance cached hash can lag a state change by a frame.
+    // A split-billboard request is per billboard and never shared; per-geometry BLASes have one geometry, so
+    // such instances do not normally get here.
+    XXH64_hash_t firstHash = kEmptyHash;
+    VkOpacityMicromapFormatEXT firstFormat = VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT;
+    for (size_t i = 0; i < instances.size(); ++i) {
+      const RtInstance& instance = *instances[i];
+      if (usesSplitBillboardOpacityMicromap(instance)) {
+        return SharedBlasOmm::HashMismatch;
+      }
+      const OmmRequest request(instance, instanceManager, OmmRequest::kInvalidIndex);
+      if (i == 0) {
+        firstHash = request.ommSrcHash;
+        firstFormat = request.ommFormat;
+      } else if (request.ommSrcHash != firstHash || request.ommFormat != firstFormat) {
+        return SharedBlasOmm::HashMismatch;
+      }
+      // Not in the hash, but able to change a blended surface's opacity through its colour (luminance blend
+      // modes): the full tFactor (the hash holds only its alpha) and the colour-affecting surface flags.
+      if (i != 0) {
+        const RtSurface& first = instances[0]->surface;
+        if (instance.surface.tFactor != first.tFactor ||
+            instance.surface.isTextureFactorBlend != first.isTextureFactorBlend ||
+            instance.surface.isVertexColorBakedLighting != first.isVertexColorBakedLighting) {
+          return SharedBlasOmm::HashMismatch;
+        }
+      }
+    }
+    if (firstHash == kEmptyHash) {
+      return SharedBlasOmm::HashMismatch;
+    }
+    return firstFormat == VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT ? SharedBlasOmm::Compatible : SharedBlasOmm::TwoState;
+  }
+
   XXH64_hash_t OpacityMicromapManager::tryBindOpacityMicromap(Rc<DxvkContext> ctx,
                                                               const RtInstance& instance, uint32_t billboardIndex,
                                                               VkAccelerationStructureGeometryKHR& targetGeometry,

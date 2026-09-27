@@ -36,6 +36,7 @@
 
 #include "dxvk_scoped_annotation.h"
 #include "rtx_options.h"
+#include "rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
 
 #include "rtx/pass/instance_definitions.h"
 #include "rtx/concept/billboard.h"
@@ -442,6 +443,8 @@ namespace dxvk {
     auto& instances = instanceManager.getInstanceTable();
     const uint32_t currentFrame = m_device->getCurrentFrameId();
 
+    // Fork (d3d9/alpha-gpu): rtx.opacityMicromap.bindSharedBlas, see rtx_fork_d3d9_alpha.h.
+    const bool optBindSharedBlasOmm = D3d9Alpha::bindSharedBlas();
     // --- Full-skip fast path ---
     // If no scene changes occurred since the last build, we can reuse all cached
     // BLAS/TLAS data and skip the expensive per-instance iteration, bucket merging,
@@ -824,6 +827,15 @@ namespace dxvk {
           if (thisOmmHash != firstOmmHash) {
             ommsCompatible = false;
             break;
+          }
+        }
+
+        // Fork (d3d9/alpha-gpu): rtx.opacityMicromap.bindSharedBlas. A shared BLAS can carry the micromap all of its
+        // instances request (checkSharedBlasOmm says when that is the same result as a per-instance micromap).
+        if (!ommsCompatible && optBindSharedBlasOmm) {
+          if (opacityMicromapManager->checkSharedBlasOmm(uniqueBlasEntry.instances, instanceManager) ==
+              OpacityMicromapManager::SharedBlasOmm::Compatible) {
+            ommsCompatible = true;
           }
         }
 
