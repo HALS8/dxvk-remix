@@ -308,11 +308,16 @@ namespace dxvk {
   }
 
   bool DrawCallState::finalizeGeometryHashes() {
-    if (!geometryData.futureGeometryHashes.valid()) {
-      return false;
-    }
+    if (geometryData.hashesPrecomputed) {
+      // rtx.geometryHashMemoInline: served from the memo on the D3D9 thread, no worker task.
+      geometryData.hashesPrecomputed = false;
+    } else {
+      if (!geometryData.futureGeometryHashes.valid()) {
+        return false;
+      }
 
-    geometryData.hashes = geometryData.futureGeometryHashes.get();
+      geometryData.hashes = geometryData.futureGeometryHashes.get();
+    }
 
     if (geometryData.hashes[HashComponents::VertexPosition] == kEmptyHash) {
       throw DxvkError("Position hash should never be empty");

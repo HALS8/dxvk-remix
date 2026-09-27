@@ -4082,6 +4082,9 @@ namespace dxvk {
       ImGui::TextUnformatted("D3D9 Draw Path (CPU)");
       RemixGui::Checkbox("D3D9: Lock-Free Reads of All Option Types", &RtxOptions::lockFreeOptionReadsObject());
       RemixGui::Checkbox("D3D9: Cache Texture Category Lookups", &RtxOptions::textureCategoryCacheObject());
+      RemixGui::Checkbox("D3D9: Memoize Geometry Hashes", &D3D9Rtx::enableGeometryHashMemoizationObject());
+      RemixGui::Checkbox("D3D9: Serve Memoized Hashes Inline (no worker task)", &D3D9Rtx::geometryHashMemoInlineObject());
+      RemixGui::DragInt("D3D9: Self-Check Memoized Hashes Every N Frames (0 = off)", &D3D9Rtx::geometryHashMemoSelfCheckFramesObject(), 1.f, 0, 100000);
       RemixGui::Separator();
       RemixGui::Checkbox("Portals: Virtual Instance Matching", &RtxOptions::useRayPortalVirtualInstanceMatchingObject());
       RemixGui::Checkbox("Portals: Fade In Effect", &RtxOptions::enablePortalFadeInEffectObject());

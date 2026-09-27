@@ -221,7 +221,14 @@ namespace dxvk {
     // buffer. Callers that want to know "has this buffer's content changed since I last looked"
     // without re-reading it can compare this counter. It intentionally shares the invalidation
     // hooks of the memoizer above so the two can never disagree about what is stale.
-    uint64_t remixContentVersion = 0;
+    // Values come from one process-wide counter (nextRemixContentVersion), so a new buffer created
+    // at a freed buffer's address never repeats a (pointer, version) pair the geometry hash memo
+    // (rtx.enableGeometryHashMemoization) keys on.
+    static uint64_t nextRemixContentVersion() {
+      static std::atomic<uint64_t> s_counter { 0 };
+      return s_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+    uint64_t remixContentVersion = nextRemixContentVersion();
     // NV-DXVK end
 
   private:

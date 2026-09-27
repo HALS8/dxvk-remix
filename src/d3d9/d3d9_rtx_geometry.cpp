@@ -124,24 +124,40 @@ namespace dxvk {
     }
   }
 
-  Future<GeometryHashes> D3D9Rtx::computeHash(const RasterGeometry& geoData, const uint32_t maxIndexValue, const XXH64_hash_t memoizationKey) {
+  Future<GeometryHashes> D3D9Rtx::computeHash(RasterGeometry& geoData, const uint32_t maxIndexValue, const XXH64_hash_t memoizationKey) {
     ScopedCpuProfileZone();
+
+    // rtx.geometryHashMemoSelfCheckFrames: on a self-check frame a memo hit is re-hashed in full, and
+    // the worker compares the result with the memoized entry before replacing it.
+    bool selfCheck = false;
 
     if (memoizationKey != 0) {
       std::lock_guard<dxvk::mutex> lock(m_geometryHashCacheMutex);
       auto it = m_geometryHashCache.find(memoizationKey);
       if (it != m_geometryHashCache.end()) {
-        ++m_geometryHashCacheHits;
+        const uint32_t selfCheckFrames = geometryHashMemoSelfCheckFrames();
+        selfCheck = selfCheckFrames != 0 && (m_d3d9FrameIndex % selfCheckFrames) == 0;
+        if (!selfCheck) {
+          ++m_geometryHashCacheHits;
 
-        // Future is single-consumption - get() clears its task pointer - so a stored Future cannot
-        // be handed out twice. Schedule a task that simply returns the memoized value instead: the
-        // dispatch is kept, but the buffer acquisition and the content hashing are both skipped.
-        const GeometryHashes cachedHashes = it->second;
-        return m_pGeometryWorkers->Schedule([cachedHashes]() -> GeometryHashes {
-          return cachedHashes;
-        });
+          if (geometryHashMemoInline()) {
+            // Served inline: no worker round trip. finalizeGeometryHashes() takes `hashes` as is.
+            geoData.hashes = it->second;
+            geoData.hashesPrecomputed = true;
+            return Future<GeometryHashes>();
+          }
+
+          // Future is single-consumption - get() clears its task pointer - so a stored Future cannot
+          // be handed out twice. Schedule a task that simply returns the memoized value instead: the
+          // dispatch is kept, but the buffer acquisition and the content hashing are both skipped.
+          const GeometryHashes cachedHashes = it->second;
+          return m_pGeometryWorkers->Schedule([cachedHashes]() -> GeometryHashes {
+            return cachedHashes;
+          });
+        }
+      } else {
+        ++m_geometryHashCacheMisses;
       }
-      ++m_geometryHashCacheMisses;
     }
 
     const uint32_t indexCount = geoData.indexCount;
@@ -203,7 +219,7 @@ namespace dxvk {
     return m_pGeometryWorkers->Schedule([this, memoizationKey, vertexRegions, indexBufferRef = indexBufferRef.ptr(),
                                  pIndexData, indexStride, indexDataSize, indexCount,
                                  maxIndexValue, vertexShaderHash, geometryDescriptorHash,
-                                 vertexLayoutHash]() -> GeometryHashes {
+                                 vertexLayoutHash, selfCheck]() -> GeometryHashes {
       ScopedCpuProfileZone();
 
       GeometryHashes hashes;
@@ -235,6 +251,22 @@ namespace dxvk {
         // Bounded so a scene that streams unique geometry indefinitely cannot grow this without
         // limit. Clearing wholesale is acceptable because a miss only costs the hash we were
         // computing anyway.
+        if (selfCheck) {
+          // The fresh hash must equal the memoized one; a mismatch means a buffer write that did not
+          // bump remixContentVersion (the memo would have served a stale hash). The entry is replaced below.
+          auto it = m_geometryHashCache.find(memoizationKey);
+          if (it != m_geometryHashCache.end() && std::memcmp(&it->second, &hashes, sizeof(GeometryHashes)) != 0) {
+            static std::atomic<uint32_t> s_mismatchLogs { 0 };
+            if (s_mismatchLogs.fetch_add(1, std::memory_order_relaxed) < 20) {
+              Logger::warn(str::format("[GeometryHashMemoCheck] memoized geometry hash is stale: key ", std::hex, memoizationKey,
+                                       " memoized positions ", it->second[HashComponents::VertexPosition],
+                                       " indices ", it->second[HashComponents::Indices],
+                                       ", fresh positions ", hashes[HashComponents::VertexPosition],
+                                       " indices ", hashes[HashComponents::Indices],
+                                       " (first 20 mismatches are logged)"));
+            }
+          }
+        }
         if (m_geometryHashCache.size() >= kMaxGeometryHashCacheEntries) {
           m_geometryHashCache.clear();
         }

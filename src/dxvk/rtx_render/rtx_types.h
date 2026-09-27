@@ -361,6 +361,9 @@ struct RaytraceGeometry {
 struct RasterGeometry {
   GeometryHashes hashes;
   Future<GeometryHashes> futureGeometryHashes;
+  // rtx.geometryHashMemoInline: `hashes` was filled from the D3D9 geometry hash memo on the
+  // D3D9 thread and futureGeometryHashes is intentionally empty.
+  bool hashesPrecomputed = false;
 
   // Actual vertex/index count (when applicable) as calculated by geo-engine
   uint32_t vertexCount = 0;
