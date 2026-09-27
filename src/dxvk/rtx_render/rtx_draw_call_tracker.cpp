@@ -23,6 +23,7 @@
 #include "rtx_options.h"
 #include "rtx_ray_portal_manager.h"
 #include "rtx_intersection_test.h"
+#include "rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
 #include "dxvk_device.h"
 #include "../util/util_struct_hash.h"
 
@@ -240,6 +241,26 @@ namespace dxvk {
         ReplacementInstance* match = const_cast<ReplacementInstance*>(nearestMatch);
         computeDirtyFlags(match, key);
         return reassociateMatch(match, key, &spatialMapIter->second);
+      }
+
+      // Fork (d3d9/alpha-gpu): rtx.trackerMaterialFallback. The material filter above rejects a draw whose
+      // texture changed since last frame (animated textures, flipbooks), so it gets a new instance every change.
+      // Reuse the unmatched one at exactly this transform with the same vertex positions instead; the MaterialHash
+      // dirty bit sends it down the full update path. Keeps its history (motion vectors, denoiser), which the
+      // re-created instance did not have, so this can change the image.
+      if (D3d9Alpha::trackerMaterialFallback()) {
+        ReplacementInstance* materialFallback = nullptr;
+        spatialMapIter->second.forEachAtTransform(key.transform, [&](const ReplacementInstance* candidate) {
+          if (candidate->vertexPositionHash == key.vertexPositionHash && candidate->frameLastSeen != currentFrameId) {
+            materialFallback = const_cast<ReplacementInstance*>(candidate);
+            return true;
+          }
+          return false;
+        });
+        if (materialFallback != nullptr) {
+          computeDirtyFlags(materialFallback, key);
+          return reassociateMatch(materialFallback, key, nullptr);
+        }
       }
     }
 
