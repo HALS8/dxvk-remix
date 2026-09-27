@@ -20,10 +20,14 @@ namespace dxvk {
   }
 
   // NOTE: Intentionally leaving the legacy hashes out of here, because they are special (REMIX-656)
-  const std::map<HashComponents, VertexRegions::Type> componentToRegionMap = {
-    { HashComponents::VertexPosition,   VertexRegions::Position },
-    { HashComponents::VertexTexcoord,   VertexRegions::Texcoord },
-  };
+  // (Was a std::map looked up twice per component per draw on the geometry workers.)
+  inline bool componentToRegion(const HashComponents component, VertexRegions::Type& regionOut) {
+    switch (component) {
+    case HashComponents::VertexPosition: regionOut = VertexRegions::Position; return true;
+    case HashComponents::VertexTexcoord: regionOut = VertexRegions::Texcoord; return true;
+    default: return false;
+    }
+  }
 
   bool getVertexRegion(const RasterBuffer& buffer, const size_t vertexCount, HashQuery& outResult) {
     ScopedCpuProfileZone();
@@ -76,8 +80,11 @@ namespace dxvk {
 
     const HashRule& globalHashRule = RtxOptions::geometryHashGenerationRule();
 
-    // TODO (REMIX-658): Improve this by reducing allocation overhead of vector
-    std::vector<T> uniqueIndices(0);
+    // REMIX-658: one vector per geometry worker thread, reused across draws (was a heap allocation
+    // sized maxIndex + 1 per draw). clear() + resize(n, 0) zero-fills exactly as before.
+    thread_local std::vector<T> tlsUniqueIndices;
+    std::vector<T>& uniqueIndices = tlsUniqueIndices;
+    uniqueIndices.clear();
     if constexpr (!std::is_same<T, NoIndices>::value) {
       assert((indexCount > 0 && indexBufferRef));
       deduplicateSortIndices(pIndexData, indexCount, maxIndexValue, uniqueIndices);
@@ -100,10 +107,15 @@ namespace dxvk {
     for (uint32_t i = 0; i < (uint32_t) HashComponents::Count; i++) {
       const HashComponents& component = (HashComponents) i;
 
-      if (globalHashRule.test(component) && componentToRegionMap.count(component) > 0) {
-        const VertexRegions::Type region = componentToRegionMap.at(component);
+      VertexRegions::Type region = VertexRegions::Position;
+      if (globalHashRule.test(component) && componentToRegion(component, region)) {
         hashesOut[component] = hashVertexRegionIndexed(vertexRegions[(uint32_t)region], uniqueIndices);
       }
+    }
+
+    // Don't keep a huge bin table alive on the worker after an unusually large draw.
+    if (uniqueIndices.capacity() > (size_t(1) << 22)) {
+      std::vector<T>().swap(uniqueIndices);
     }
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
