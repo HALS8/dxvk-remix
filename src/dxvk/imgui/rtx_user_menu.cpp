@@ -587,13 +587,10 @@ namespace dxvk {
     {
       // Volumetrics being enabled/disabled is not controlled by the graphics preset, so show the user settings regardless of preset.
       RemixGui::Checkbox("Enable Volumetric Lighting", &RtxGlobalVolumetrics::enableObject());
-      // Volumetrics quality settings are set by the graphics preset, so only show the user settings if the preset is Custom and the volumetrics are enabled.
-      ImGui::BeginDisabled(!RtxGlobalVolumetrics::enable() || RtxOptions::graphicsPreset() != GraphicsPreset::Custom);
+      // Fork: one froxel cache quality control. With volumetrics on it is the quality level buttons (unlocked only on the
+      // Custom graphics preset, which otherwise sets them); with volumetrics off it is the particle/decal cache dropdown.
       ImGui::Indent(static_cast<float>(subItemIndent));
       common->metaGlobalVolumetrics().showImguiUserSettings();
-      ImGui::EndDisabled();
-      // Fork: how much of the froxel cache to keep for particles and decals while volumetrics are off.
-      RtxGlobalVolumetrics::showConsumerCacheQualityCombo();
       ImGui::Unindent(static_cast<float>(subItemIndent));
     }
 

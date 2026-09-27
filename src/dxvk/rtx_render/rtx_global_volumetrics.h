@@ -316,7 +316,7 @@ enum class FroxelConsumerCacheQuality : int {
     const Resources::Resource& getPreviousVolumeAccumulatedRadianceAge() const { return m_volumeAccumulatedRadianceAge[!m_swapTextures]; }
 
     void showPresetMenu();
-    static void showConsumerCacheQualityCombo();
+    void showFroxelCacheQuality(bool presetLocked, bool showGridSize);
     void showImguiUserSettings();
     void showImguiSettings(const WeatherSnapshot* weatherSnapshot = nullptr);
 

@@ -4383,6 +4383,9 @@ UVW from `VolumeArgs`, so a smaller grid needs no shader change.
   option, `m_froxelCacheReduction` / `m_froxelTexturesReduction`, `showConsumerCacheQualityCombo()`.
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `kConsumerCacheDivisors` (x/y divisor on top of
   `froxelGridResolutionScale`, depth-slice divisor for both grids); `onFrameBegin` latches the reduction with the
-  gate and drops history when it changes; `createDownscaledResource` applies the divisors; dev-menu combo and grid
-  readout under Volumetric Lighting.
-- **`src/dxvk/imgui/rtx_user_menu.cpp`** - the same combo in the user graphics menu under RTX Volumetrics Settings.
+  gate and drops history when it changes; `createDownscaledResource` applies the divisors. `showFroxelCacheQuality`
+  is the single cache quality control: the Quality Level Preset buttons while volumetrics are on, the
+  `consumerCacheQuality` dropdown while they are off; dev menu (Froxel Radiance Cache, with a grid-size readout) and
+  `showImguiUserSettings`.
+- **`src/dxvk/imgui/rtx_user_menu.cpp`** - RTX Volumetrics Settings calls `showImguiUserSettings` unconditionally; the
+  Custom-preset lock now applies only to the quality buttons.

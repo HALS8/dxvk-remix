@@ -235,9 +235,9 @@ namespace dxvk {
     };
 
     RemixGui::ComboWithKey<FroxelConsumerCacheQuality> consumerCacheQualityCombo {
-      "Froxel Cache While Disabled",
+      "Quality Level Preset##consumerCache",
       RemixGui::ComboWithKey<FroxelConsumerCacheQuality>::ComboEntries { {
-          {FroxelConsumerCacheQuality::Off, "Off (fastest, particles lose cache light)"},
+          {FroxelConsumerCacheQuality::Off, "Off (fastest, particles and decals lose cache light)"},
           {FroxelConsumerCacheQuality::Low, "Low"},
           {FroxelConsumerCacheQuality::Medium, "Medium"},
           {FroxelConsumerCacheQuality::High, "High"},
@@ -246,11 +246,23 @@ namespace dxvk {
     };
   }
 
-  void RtxGlobalVolumetrics::showConsumerCacheQualityCombo() {
-    // Only meaningful while volumetrics are off.
-    ImGui::BeginDisabled(enable());
-    consumerCacheQualityCombo.getKey(&consumerCacheQualityObject());
-    ImGui::EndDisabled();
+  // Fork: the one froxel cache quality control. With volumetrics on the fog is drawn from the cache, so the
+  // quality level buttons pick its full resolution (and the graphics preset may own them); with volumetrics off
+  // only particles, decals and dust read it, and rtx.volumetrics.consumerCacheQuality picks how far to shrink it.
+  void RtxGlobalVolumetrics::showFroxelCacheQuality(bool presetLocked, bool showGridSize) {
+    if (enable()) {
+      ImGui::BeginDisabled(presetLocked);
+      showPresetMenu();
+      ImGui::EndDisabled();
+    } else {
+      consumerCacheQualityCombo.getKey(&consumerCacheQualityObject());
+      ImGui::TextDisabled("Volumetrics off: only particles and decals use the cache.");
+    }
+
+    if (showGridSize) {
+      ImGui::TextDisabled("Froxel grid: %s, %ux%ux%u", m_froxelCacheActive ? "active" : "skipped",
+                          m_froxelVolumeExtent.width, m_froxelVolumeExtent.height, m_froxelVolumeExtent.depth);
+    }
   }
 
   namespace {
@@ -313,7 +325,8 @@ namespace dxvk {
   }
 
   void RtxGlobalVolumetrics::showImguiUserSettings() {
-    showPresetMenu();
+    // Volumetrics quality levels are set by the graphics preset, so the buttons only unlock on Custom.
+    showFroxelCacheQuality(RtxOptions::graphicsPreset() != GraphicsPreset::Custom, false);
   }
 
   void RtxGlobalVolumetrics::showImguiSettings(const WeatherSnapshot* weatherSnapshot) {
@@ -330,7 +343,7 @@ namespace dxvk {
     if (RemixGui::CollapsingHeader("Froxel Radiance Cache", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Indent();
 
-      showPresetMenu();
+      showFroxelCacheQuality(false, true);
 
       RemixGui::Separator();
 
@@ -388,12 +401,6 @@ namespace dxvk {
       ImGui::Indent();
 
       RemixGui::Checkbox("Enable Volumetric Lighting", &enableObject());
-      // Fork: froxel cache size while volumetrics are off.
-      showConsumerCacheQualityCombo();
-      if (!enable()) {
-        ImGui::TextDisabled("Froxel cache: %s, %ux%ux%u", m_froxelCacheActive ? "active" : "skipped",
-                            m_froxelVolumeExtent.width, m_froxelVolumeExtent.height, m_froxelVolumeExtent.depth);
-      }
       {
         ImGui::Indent();
         ImGui::BeginDisabled(!enable());
