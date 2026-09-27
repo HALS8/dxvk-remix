@@ -54,8 +54,9 @@ namespace dxvk {
   // rtx.lockFreeOptionReads (set by its on-change callback): getValue() / containsHash() of non-scalar
   // options -- the texture hash sets read per draw call, vectors and strings -- skip the global option
   // mutex. The getter returns a reference into the resolved value that every caller reads after the
-  // lock has been released, so the lock never covered the read. Off by default.
-  inline std::atomic<bool> g_rtxOptionLockFreeAllReads { false };
+  // lock has been released, so the lock never covered the read. The initial value must match the
+  // option's default: the callback only fires when the value changes.
+  inline std::atomic<bool> g_rtxOptionLockFreeAllReads { true };
   // Bumped (release) every time an option's resolved value changes (RtxOptionImpl::resolveValue),
   // after the new value is in place. Caches derived from option values (rtx.textureCategoryCache)
   // compare it to know when to rebuild.

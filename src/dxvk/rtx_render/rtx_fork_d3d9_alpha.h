@@ -21,7 +21,7 @@ namespace dxvk {
 
   class D3d9Alpha {
   public:
-    RTX_OPTION("rtx.opacityMicromap", bool, bindSharedBlas, false,
+    RTX_OPTION("rtx.opacityMicromap", bool, bindSharedBlas, true,
                "Per-geometry BLASes shared by several instances (meshes above rtx.minPrimsInDynamicBLAS drawn more than once,\n"
                "e.g. repeated replacement foliage and fences) bind an opacity micromap when every instance requests the same\n"
                "4-state one: same OMM source hash (material, alpha state, texture stage ops, texture transform, geometry) and\n"
