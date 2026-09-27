@@ -49,6 +49,8 @@ namespace dxvk {
     RTX_OPTION("rtx", bool, useWorldMatricesForShaders, true, "When enabled, Remix will utilize the world matrices being passed from the game via D3D9 fixed function API, even when running with shaders.  Sometimes games pass these matrices and they are useful, however for some games they are very unreliable, and should be filtered out.  If you're seeing precision related issues with shader vertex capture, try disabling this setting.");
     RTX_OPTION("rtx", bool, enableIndexBufferMemoization, true, "CPU performance optimization, should generally be enabled.  Will reduce main thread time by caching processIndexBuffer operations and reusing when possible, this will come at the expense of some CPU RAM.");
     RTX_OPTION("rtx", bool, enableGeometryHashMemoization, false, "CPU performance optimization.  Caches the full vertex/index content hash for a draw call and reuses it while none of the source buffers have been written, instead of re-hashing identical geometry every frame.  Defaults to off: the geometry hash drives all asset replacement matching, so a missed invalidation would mismatch replacements rather than merely cost performance.  Only applies to fixed-function draw calls; shader-capture draws always re-hash.");
+    RTX_OPTION("rtx", bool, cacheShaderBytecodeHash, false, "CPU cost (standard D3D9 draw path, shader vertex capture). The vertex shader bytecode was hashed (XXH3) on every shader-capture draw for the geometry hash. With this on the hash computed once when the shader was created is used. Same value. Off = original behaviour.");
+    RTX_OPTION("rtx", bool, poolVertexCaptureBuffers, false, "CPU cost (standard D3D9 draw path, shader vertex capture). Every shader-capture draw created a new device-local 'Vertex Capture Buffer'. With this on, buffers are kept in power-of-two size classes and reused once nothing refers to them any more (no draw state or BLAS input holds them and the GPU is done with them); unused ones are released after ~300 frames. Same contents are written. Off = original behaviour.");
     RTX_OPTION("rtx", bool, geometryHashMemoInline, false, "CPU cost (standard D3D9 draw path), with rtx.enableGeometryHashMemoization. A memo hit still scheduled a geometry-worker task that only returned the memoized value, and the CS thread waited on it. With this on the memoized hashes are handed to the CS thread with the draw, no worker round trip. Same hashes. Off = original behaviour.");
     RTX_OPTION("rtx", uint32_t, geometryHashMemoSelfCheckFrames, 0, "Correctness check for rtx.enableGeometryHashMemoization. Every N D3D9 frames every memo hit is re-hashed in full and compared with the memoized value; a mismatch (a buffer write that did not bump the buffer's content version) logs [GeometryHashMemoCheck] (first 20). The fresh hash is used on those frames. 0 = off.");
     RTX_OPTION("rtx", uint32_t, numGeometryProcessingThreads, 2, "The desired number of CPU threads to dedicate to geometry processing  Will be limited by the number of CPU cores.  There may be some advantage to lowering this number in games which are fairly simple and use a low number of draw calls per frame.  The default was determined by looking at a game with around 2000 draw calls per frame, and with a reasonably high average triangle count per draw.");
@@ -242,6 +244,22 @@ namespace dxvk {
     // D3D9 frames seen (EndFrame), for rtx.geometryHashMemoSelfCheckFrames.
     uint32_t m_d3d9FrameIndex = 0;
 
+    // rtx.poolVertexCaptureBuffers
+    struct PooledCaptureBuffer {
+      Rc<DxvkBuffer> buffer;
+      uint32_t lastUsedFrame = 0;
+    };
+    struct CaptureBufferBucket {
+      std::vector<PooledCaptureBuffer> buffers;
+      size_t cursor = 0;
+    };
+    static constexpr VkDeviceSize kMinCaptureBufferClass = 4096;
+    static constexpr size_t kCaptureBufferProbes = 16;
+    static constexpr size_t kMaxPooledCaptureBuffersPerClass = 4096;
+    static constexpr uint32_t kCaptureBufferMaxIdleFrames = 300;
+    std::unordered_map<VkDeviceSize, CaptureBufferBucket> m_captureBufferPool;
+    DxvkBufferSlice allocVertexCaptureBuffer(const VkDeviceSize size);
+    void trimVertexCaptureBufferPool();
     // rtx.textureCategoryCache: every texture-list lookup a draw makes for one texture hash.
     struct TextureListInfo {
       CategoryFlags categories = 0;     // DrawCallState::computeTextureListCategories() + SmoothNormals

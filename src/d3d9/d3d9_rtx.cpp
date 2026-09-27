@@ -15,6 +15,7 @@
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 
@@ -150,13 +151,65 @@ namespace dxvk {
     return result.slice;
   }
 
-  DxvkBufferSlice allocVertexCaptureBuffer(DxvkDevice* pDevice, const VkDeviceSize size) {
+  static Rc<DxvkBuffer> createVertexCaptureBuffer(DxvkDevice* pDevice, const VkDeviceSize size) {
     DxvkBufferCreateInfo info;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.access = VK_ACCESS_TRANSFER_READ_BIT;
     info.stages = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
     info.size = size;
-    return DxvkBufferSlice(pDevice->createBuffer(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::AppBuffer, "Vertex Capture Buffer"));
+    return pDevice->createBuffer(info, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::AppBuffer, "Vertex Capture Buffer");
+  }
+
+  DxvkBufferSlice D3D9Rtx::allocVertexCaptureBuffer(const VkDeviceSize size) {
+    DxvkDevice* pDevice = m_parent->GetDXVKDevice().ptr();
+
+    if (!poolVertexCaptureBuffers()) {
+      m_captureBufferPool.clear();
+      return DxvkBufferSlice(createVertexCaptureBuffer(pDevice, size));
+    }
+
+    // rtx.poolVertexCaptureBuffers: power-of-two size classes. A pooled buffer is reused only when
+    // the pool holds the last reference (no draw-call state, BlasEntry input, CS chunk or context
+    // binding refers to it) and no command list still uses it on the GPU.
+    VkDeviceSize sizeClass = kMinCaptureBufferClass;
+    while (sizeClass < size) {
+      sizeClass <<= 1;
+    }
+    CaptureBufferBucket& bucket = m_captureBufferPool[sizeClass];
+    const size_t count = bucket.buffers.size();
+    const size_t probes = std::min<size_t>(count, kCaptureBufferProbes);
+    for (size_t i = 0; i < probes; ++i) {
+      const size_t idx = (bucket.cursor + i) % count;
+      PooledCaptureBuffer& entry = bucket.buffers[idx];
+      entry.buffer->incRef();
+      const uint32_t refs = entry.buffer->decRef();
+      if (refs == 1 && !entry.buffer->isInUse()) { // isInUse(Read) checks readers and writers
+        bucket.cursor = idx + 1;
+        entry.lastUsedFrame = m_d3d9FrameIndex;
+        return DxvkBufferSlice(entry.buffer, 0, size);
+      }
+    }
+
+    Rc<DxvkBuffer> buffer = createVertexCaptureBuffer(pDevice, sizeClass);
+    if (count < kMaxPooledCaptureBuffersPerClass) {
+      bucket.buffers.push_back({ buffer, m_d3d9FrameIndex });
+    }
+    return DxvkBufferSlice(buffer, 0, size);
+  }
+
+  void D3D9Rtx::trimVertexCaptureBufferPool() {
+    // Once a second or so: release pooled capture buffers that have not been handed out for a while.
+    if (m_captureBufferPool.empty() || (m_d3d9FrameIndex % 64) != 0) {
+      return;
+    }
+    for (auto it = m_captureBufferPool.begin(); it != m_captureBufferPool.end();) {
+      std::vector<PooledCaptureBuffer>& buffers = it->second.buffers;
+      buffers.erase(std::remove_if(buffers.begin(), buffers.end(), [this](const PooledCaptureBuffer& e) {
+        return m_d3d9FrameIndex - e.lastUsedFrame > kCaptureBufferMaxIdleFrames;
+      }), buffers.end());
+      it->second.cursor = 0;
+      it = buffers.empty() ? m_captureBufferPool.erase(it) : std::next(it);
+    }
   }
 
   void D3D9Rtx::prepareVertexCapture(const int vertexIndexOffset) {
@@ -186,7 +239,7 @@ namespace dxvk {
     const uint32_t stride = sizeof(CapturedVertex);
     const size_t vertexCaptureDataSize = align(geoData.vertexCount * stride, CACHE_LINE_SIZE);
 
-    DxvkBufferSlice slice = allocVertexCaptureBuffer(m_parent->GetDXVKDevice().ptr(), vertexCaptureDataSize);
+    DxvkBufferSlice slice = allocVertexCaptureBuffer(vertexCaptureDataSize);
 
     geoData.positionBuffer = RasterBuffer(slice, 0, stride, VK_FORMAT_R32G32B32A32_SFLOAT);
     assert(geoData.positionBuffer.offset() % 4 == 0);
@@ -1435,6 +1488,7 @@ namespace dxvk {
 
     m_stagedBones.clear();
     ++m_d3d9FrameIndex;
+    trimVertexCaptureBufferPool();
   }
 
   void D3D9Rtx::OnPresent(const Rc<DxvkImage>& targetImage) {

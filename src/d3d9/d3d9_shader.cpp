@@ -4,11 +4,13 @@
 #include "d3d9_device.h"
 #include "d3d9_util.h"
 #include "../dxvk/dxvk_scoped_annotation.h"
+#include "../util/xxHash/xxhash.h"
 
 
 namespace dxvk {
 
-  D3D9CommonShader::D3D9CommonShader() {}
+  D3D9CommonShader::D3D9CommonShader()
+    : m_bytecodeHash(XXH3_64bits(nullptr, 0)) {}
 
   D3D9CommonShader::D3D9CommonShader(
             D3D9DeviceEx*         pDevice,
@@ -21,6 +23,8 @@ namespace dxvk {
     const uint32_t bytecodeLength = AnalysisInfo.bytecodeByteLength;
     m_bytecode.resize(bytecodeLength);
     std::memcpy(m_bytecode.data(), pShaderBytecode, bytecodeLength);
+    // Same value D3D9Rtx::computeHash computed per shader-capture draw (rtx.cacheShaderBytecodeHash).
+    m_bytecodeHash = XXH3_64bits(m_bytecode.data(), m_bytecode.size());
 
     const std::string name = Key.toString();
     Logger::debug(str::format("Compiling shader ", name));

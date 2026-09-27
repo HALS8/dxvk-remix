@@ -193,8 +193,14 @@ namespace dxvk {
     if (m_parent->UseProgrammableVS() && useVertexCapture()) {
       if (RtxOptions::geometryHashGenerationRule().test(HashComponents::GeometryDescriptor)) {
         const D3D9ConstantSets& cb = m_parent->m_consts[DxsoProgramTypes::VertexShader];
-        auto& shaderByteCode = d3d9State().vertexShader->GetCommonShader()->GetBytecode();
-        vertexShaderHash = XXH3_64bits(shaderByteCode.data(), shaderByteCode.size());
+        const D3D9CommonShader* pVertexShader = d3d9State().vertexShader->GetCommonShader();
+        if (cacheShaderBytecodeHash()) {
+          // Hashed once when the shader was created: same value, no per-draw pass over the bytecode.
+          vertexShaderHash = pVertexShader->GetBytecodeHash();
+        } else {
+          auto& shaderByteCode = pVertexShader->GetBytecode();
+          vertexShaderHash = XXH3_64bits(shaderByteCode.data(), shaderByteCode.size());
+        }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], cb.meta.maxConstIndexF * sizeof(float) * 4, vertexShaderHash);
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.bConsts[0], cb.meta.maxConstIndexB * sizeof(uint32_t)/32, vertexShaderHash);

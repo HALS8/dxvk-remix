@@ -45,6 +45,11 @@ namespace dxvk {
       return m_bytecode;
     }
 
+    // XXH3_64bits of GetBytecode(), computed once at creation (rtx.cacheShaderBytecodeHash).
+    uint64_t GetBytecodeHash() const {
+      return m_bytecodeHash;
+    }
+
     const DxsoIsgn& GetIsgn() const {
       return m_isgn;
     }
@@ -81,6 +86,7 @@ namespace dxvk {
     DxsoPermutations      m_shaders;
 
     std::vector<uint8_t>  m_bytecode;
+    uint64_t              m_bytecodeHash = 0;
 
   };
 
