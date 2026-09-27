@@ -4356,7 +4356,7 @@ Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches f
 ### Volumetrics disabled = zero cost
 
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `rtx.volumetrics.keepRadianceCacheWhenDisabled` option
-  (default off), `isFroxelCacheActive()`, `m_froxelCacheActive` / `m_froxelCacheHistoryStale`; `enable`
+  (default off; later folded into `consumerCacheQuality` Full), `isFroxelCacheActive()`, `m_froxelCacheActive` / `m_froxelCacheHistoryStale`; `enable`
   description updated.
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `onFrameBegin` latches the gate; `dispatch` returns
   early when the cache is inactive; `getVolumeArgs` zeroes `volumetricConsumerGain` on skipped frames and
@@ -4364,7 +4364,7 @@ Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches f
 
 ### Froxel cache textures shrink to placeholders while the cache is off
 
-- **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `m_froxelTexturesFull`; `keepRadianceCacheWhenDisabled`
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `m_froxelTexturesFull`; the `consumerCacheQuality`
   description mentions the freed textures.
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `onFrameBegin` latches the cache gate before
   `RtxPass::onFrameBegin` and reallocates when `m_froxelTexturesFull` disagrees with it; `createDownscaledResource`
@@ -4375,7 +4375,8 @@ Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches f
 
 Skipping the cache left particles, decals, the PSR diffuse approximation, the stochastic alpha blend fallback and
 dust without cache light. `rtx.volumetrics.consumerCacheQuality` (Off / Low / Medium / High, default Medium) now
-builds a reduced cache for those readers instead; Off keeps the skip. The readers look the cache up by normalized
+builds a reduced cache for those readers instead; Off keeps the skip and Full builds the full-size cache. Full
+replaces `rtx.volumetrics.keepRadianceCacheWhenDisabled`, which was removed so that one dropdown controls the cache. The readers look the cache up by normalized
 UVW from `VolumeArgs`, so a smaller grid needs no shader change.
 
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `FroxelConsumerCacheQuality` enum, `consumerCacheQuality`

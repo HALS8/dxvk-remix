@@ -39,7 +39,8 @@ enum class FroxelConsumerCacheQuality : int {
   Off = 0,
   Low,
   Medium,
-  High
+  High,
+  Full
 };
 
   class RtxGlobalVolumetrics : public CommonDeviceObject, public RtxPass {
@@ -146,14 +147,8 @@ enum class FroxelConsumerCacheQuality : int {
     RTX_OPTION_FLAG("rtx.volumetrics", bool, enableReferenceMode, false, RtxOptionFlags::NoSave, "Enables reference mode for volumetrics.  This is very expensive, but allows for rendering engineers to test how close sampling approximations are to the real thing. This will not save.");
     RTX_OPTION_ARGS("rtx.volumetrics", bool, enable, true,
                "Enabling volumetric lighting provides higher quality ray traced physical volumetrics, disabling falls back to cheaper depth based fog.\n"
-               "Note that disabling this option also shrinks or skips the froxel radiance cache passes (fork), as set by rtx.volumetrics.consumerCacheQuality, "
-               "unless rtx.volumetrics.keepRadianceCacheWhenDisabled is set.",
+               "Note that disabling this option also shrinks or skips the froxel radiance cache passes (fork), as set by rtx.volumetrics.consumerCacheQuality.",
                args.flags = RtxOptionFlags::UserSetting);
-    // Fork (fo4/gpu-opt): escape hatch for the "disabled = zero cost" gate in RtxGlobalVolumetrics::dispatch.
-    RTX_OPTION("rtx.volumetrics", bool, keepRadianceCacheWhenDisabled, false,
-               "Keep building the full-size froxel radiance cache (the five Volume Integrate compute passes) while rtx.volumetrics.enable is off.\n"
-               "Off (default): while volumetrics are off the cache is sized by rtx.volumetrics.consumerCacheQuality.\n"
-               "On: upstream behaviour, the cache is rebuilt at full size every frame; overrides rtx.volumetrics.consumerCacheQuality.");
     RTX_OPTION_ARGS("rtx.volumetrics", FroxelConsumerCacheQuality, consumerCacheQuality, FroxelConsumerCacheQuality::Medium,
                "Froxel radiance cache resolution while rtx.volumetrics.enable is off. With volumetrics off the cache's only readers are its surface consumers "
                "(opacity-lighting-approximated particles, decal/PSR diffuse approximation, stochastic alpha blend radiance-volume fallback, dust particles), "
@@ -162,7 +157,8 @@ enum class FroxelConsumerCacheQuality : int {
                "Low (1): grid 4x coarser in x and y, half the depth slices (~1/32 of the full cache's cells).\n"
                "Medium (2, default): grid 2x coarser in x and y, half the depth slices (~1/8 of the cells).\n"
                "High (3): grid 2x coarser in x and y, all depth slices (~1/4 of the cells).\n"
-               "Ignored while volumetrics are on or rtx.volumetrics.keepRadianceCacheWhenDisabled is set.",
+               "Full (4): the full-size cache, rebuilt every frame as upstream does.\n"
+               "Ignored while volumetrics are on (the cache is always full size then).",
                args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION("rtx.volumetrics", bool, enableTranslucentShadows, false,
                "Calculate coloured shadows from translucent materials (i.e. glass, water) in volumetric lighting. In engineering terms: include OBJECT_MASK_TRANSLUCENT into volumetric visibility rays.");

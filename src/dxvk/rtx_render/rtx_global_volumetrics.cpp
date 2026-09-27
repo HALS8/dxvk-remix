@@ -231,6 +231,7 @@ namespace dxvk {
       uint2(4, 2), // Low
       uint2(2, 2), // Medium
       uint2(2, 1), // High
+      uint2(1, 1), // Full (never a reduction; kept so every value indexes safely)
     };
 
     RemixGui::ComboWithKey<FroxelConsumerCacheQuality> consumerCacheQualityCombo {
@@ -240,13 +241,14 @@ namespace dxvk {
           {FroxelConsumerCacheQuality::Low, "Low"},
           {FroxelConsumerCacheQuality::Medium, "Medium"},
           {FroxelConsumerCacheQuality::High, "High"},
+          {FroxelConsumerCacheQuality::Full, "Full (slowest, same as volumetrics on)"},
       } }
     };
   }
 
   void RtxGlobalVolumetrics::showConsumerCacheQualityCombo() {
-    // Only meaningful while volumetrics are off and the full cache is not being kept.
-    ImGui::BeginDisabled(enable() || keepRadianceCacheWhenDisabled());
+    // Only meaningful while volumetrics are off.
+    ImGui::BeginDisabled(enable());
     consumerCacheQualityCombo.getKey(&consumerCacheQualityObject());
     ImGui::EndDisabled();
   }
@@ -386,10 +388,7 @@ namespace dxvk {
       ImGui::Indent();
 
       RemixGui::Checkbox("Enable Volumetric Lighting", &enableObject());
-      // Fork (fo4/gpu-opt): only meaningful while volumetrics are off.
-      ImGui::BeginDisabled(enable());
-      RemixGui::Checkbox("Keep Froxel Cache When Disabled", &keepRadianceCacheWhenDisabledObject());
-      ImGui::EndDisabled();
+      // Fork: froxel cache size while volumetrics are off.
       showConsumerCacheQualityCombo();
       if (!enable()) {
         ImGui::TextDisabled("Froxel cache: %s, %ux%ux%u", m_froxelCacheActive ? "active" : "skipped",
@@ -879,7 +878,7 @@ namespace dxvk {
     // (isEnabled() is hard-wired true, and nothing else gated this call) - measured at ~4.2 ms p50 in
     // the FO4 run31 [PerfGpu] "Volumetrics" stage with rtx.volumetrics.enable = False. With volumetrics
     // off the only readers left are the evalVolumetricNEE surface consumers, which getVolumeArgs zeroes
-    // for skipped frames; rtx.volumetrics.keepRadianceCacheWhenDisabled restores the old behaviour.
+    // for skipped frames; rtx.volumetrics.consumerCacheQuality picks a reduced or full cache instead.
     if (!m_froxelCacheActive) {
       return;
     }
@@ -1017,8 +1016,9 @@ namespace dxvk {
     // frame, so that first allocation is already sized for the gate (see createDownscaledResource).
     // Fork: with volumetrics off (and the full cache not kept) consumerCacheQuality either skips the cache or
     // builds a reduced consumer-only one; a change of size drops history like the cache restarting does.
-    const bool fullCache = enable() || keepRadianceCacheWhenDisabled();
-    const FroxelConsumerCacheQuality reduction = fullCache ? FroxelConsumerCacheQuality::Off : consumerCacheQuality();
+    const FroxelConsumerCacheQuality quality = consumerCacheQuality();
+    const bool fullCache = enable() || quality == FroxelConsumerCacheQuality::Full;
+    const FroxelConsumerCacheQuality reduction = fullCache ? FroxelConsumerCacheQuality::Off : quality;
     const bool cacheActive = fullCache || reduction != FroxelConsumerCacheQuality::Off;
     m_froxelCacheHistoryStale = cacheActive && (!m_froxelCacheActive || reduction != m_froxelCacheReduction);
     m_froxelCacheActive = cacheActive;
@@ -1062,7 +1062,7 @@ namespace dxvk {
     restirFroxelGridFullDimensions.width *= m_numFroxelVolumes;
 
     // Fork (fo4/gating): with the froxel cache off (rtx.volumetrics.enable = False,
-    // keepRadianceCacheWhenDisabled off and consumerCacheQuality Off) no pass writes these textures, composite skips them on
+    // consumerCacheQuality Off) no pass writes these textures, composite skips them on
     // volumeArgs.enable, and the evalVolumetricNEE surface consumers multiply what they sample by a
     // volumetricConsumerGain that getVolumeArgs forces to 0 (only the volumetric debug views read them raw). So they are allocated as cleared
     // 1x1x1 placeholders that keep every binding valid (~92 MiB saved at 1280x800, grid scale 4, 48 slices).
