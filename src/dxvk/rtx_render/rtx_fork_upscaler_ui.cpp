@@ -187,6 +187,17 @@ namespace dxvk {
         "Selecting a technology enables frame generation; selecting Off disables it. "
         "V-Sync is turned off automatically while frame generation is active.");
 
+      // DLSS is hidden from the dropdown when DLSS-G is unsupported, so the status line's DLSS branch can
+      // never show why. Show the reason here instead, greyed like upstream's disabled checkbox did.
+      if (!isDlfgSupported) {
+        const auto& reason = ctx->getCommonObjects()->metaNGXContext().getDLFGNotSupportedReason();
+        if (reason.size()) {
+          ImGui::BeginDisabled();
+          ImGui::TextWrapped(reason.c_str());
+          ImGui::EndDisabled();
+        }
+      }
+
       showFrameGenerationStatus(ctx, isDlfgSupported);
 
       // Per-backend extras. Neither draws an enable toggle - the dropdown above

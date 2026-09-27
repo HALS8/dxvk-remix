@@ -615,6 +615,10 @@ namespace dxvk
     if (NVSDK_NGX_FAILED(params->Get(NVSDK_NGX_DLSSG_Parameter_MultiFrameCountMax, (int*)&m_dlfgMaxInterpolatedFrames))) {
       m_dlfgNotSupportedReason = m_dlfgNotSupportedReason + " NGX parameter query for MultiFrameCountMax failed.";
       m_supportsDLFG = false;
+    } else {
+      // Fork: the multi frame dropdown and the runtime clamp both follow this value, so log it to show
+      // what the driver/DLL reports on this machine.
+      Logger::info(str::format("NVIDIA DLSS Frame Generation: MultiFrameCountMax = ", m_dlfgMaxInterpolatedFrames));
     }
 
     if (m_dlfgNotSupportedReason.size()) {
