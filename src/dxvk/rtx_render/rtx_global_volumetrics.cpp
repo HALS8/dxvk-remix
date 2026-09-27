@@ -976,17 +976,22 @@ namespace dxvk {
   }
 
   void RtxGlobalVolumetrics::onFrameBegin(Rc<DxvkContext>& ctx, const FrameBeginContext& frameBeginCtx) {
-    RtxPass::onFrameBegin(ctx, frameBeginCtx);
-
-    m_swapTextures = !m_swapTextures;
-
     // Fork (fo4/gpu-opt): latch the froxel cache gate once per frame (ImGui can flip the options
     // mid-frame; getVolumeArgs and dispatch must agree).
+    // Fork (fo4/gating): latched before RtxPass::onFrameBegin, which creates the textures on the first
+    // frame, so that first allocation is already sized for the gate (see createDownscaledResource).
     const bool cacheActive = enable() || keepRadianceCacheWhenDisabled();
     m_froxelCacheHistoryStale = cacheActive && !m_froxelCacheActive;
     m_froxelCacheActive = cacheActive;
 
-    if (m_rebuildFroxels) {
+    RtxPass::onFrameBegin(ctx, frameBeginCtx);
+
+    m_swapTextures = !m_swapTextures;
+
+    // Fork (fo4/gating): the gate flipped since the textures were created, so resize them (full grid
+    // when the cache runs again, 1x1x1 placeholders when it stops). The first frame back already
+    // resets history (m_froxelCacheHistoryStale), and new textures start cleared.
+    if (m_rebuildFroxels || m_froxelTexturesFull != m_froxelCacheActive) {
       createDownscaledResource(ctx, frameBeginCtx.downscaledExtent);
     }
   }
@@ -1005,19 +1010,31 @@ namespace dxvk {
 
     froxelGridFullDimensions.width *= m_numFroxelVolumes;
 
-    m_volumeAccumulatedRadianceY[0] = Resources::createImageResource(ctx, "volume accumulated radiance SH(Y) 0", froxelGridFullDimensions, VK_FORMAT_R16G16B16A16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-    m_volumeAccumulatedRadianceY[1] = Resources::createImageResource(ctx, "volume accumulated radiance SH(Y) 1", froxelGridFullDimensions, VK_FORMAT_R16G16B16A16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-    m_volumeAccumulatedRadianceCoCg[0] = Resources::createImageResource(ctx, "volume accumulated radiance (Co, Cg) 0", froxelGridFullDimensions, VK_FORMAT_R16G16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-    m_volumeAccumulatedRadianceCoCg[1] = Resources::createImageResource(ctx, "volume accumulated radiance (Co, Cg) 1", froxelGridFullDimensions, VK_FORMAT_R16G16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-    m_volumeAccumulatedRadianceAge[0] = Resources::createImageResource(ctx, "volume accumulated radiance (Age) 0", froxelGridFullDimensions, VK_FORMAT_R8_UNORM, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-    m_volumeAccumulatedRadianceAge[1] = Resources::createImageResource(ctx, "volume accumulated radiance (Age) 1", froxelGridFullDimensions, VK_FORMAT_R8_UNORM, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
-
     // Calculate the restir grid resolution
     m_restirFroxelVolumeExtent = util::computeBlockCount(m_froxelVolumeExtent, VkExtent3D { restirGridScale(), restirGridScale(), 1 });
     m_restirFroxelVolumeExtent.depth = restirFroxelDepthSlices();
 
     VkExtent3D restirFroxelGridFullDimensions = m_restirFroxelVolumeExtent;
     restirFroxelGridFullDimensions.width *= m_numFroxelVolumes;
+
+    // Fork (fo4/gating): with the froxel cache off (rtx.volumetrics.enable = False and
+    // keepRadianceCacheWhenDisabled off) no pass writes these textures, composite skips them on
+    // volumeArgs.enable, and the evalVolumetricNEE surface consumers multiply what they sample by a
+    // volumetricConsumerGain that getVolumeArgs forces to 0 (only the volumetric debug views read them raw). So they are allocated as cleared
+    // 1x1x1 placeholders that keep every binding valid (~92 MiB saved at 1280x800, grid scale 4, 48 slices).
+    // The logical extents above still feed VolumeArgs; sampling uses normalized coordinates.
+    m_froxelTexturesFull = m_froxelCacheActive;
+    if (!m_froxelTexturesFull) {
+      froxelGridFullDimensions = VkExtent3D { 1, 1, 1 };
+      restirFroxelGridFullDimensions = VkExtent3D { 1, 1, 1 };
+    }
+
+    m_volumeAccumulatedRadianceY[0] = Resources::createImageResource(ctx, "volume accumulated radiance SH(Y) 0", froxelGridFullDimensions, VK_FORMAT_R16G16B16A16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
+    m_volumeAccumulatedRadianceY[1] = Resources::createImageResource(ctx, "volume accumulated radiance SH(Y) 1", froxelGridFullDimensions, VK_FORMAT_R16G16B16A16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
+    m_volumeAccumulatedRadianceCoCg[0] = Resources::createImageResource(ctx, "volume accumulated radiance (Co, Cg) 0", froxelGridFullDimensions, VK_FORMAT_R16G16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
+    m_volumeAccumulatedRadianceCoCg[1] = Resources::createImageResource(ctx, "volume accumulated radiance (Co, Cg) 1", froxelGridFullDimensions, VK_FORMAT_R16G16_SFLOAT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
+    m_volumeAccumulatedRadianceAge[0] = Resources::createImageResource(ctx, "volume accumulated radiance (Age) 0", froxelGridFullDimensions, VK_FORMAT_R8_UNORM, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
+    m_volumeAccumulatedRadianceAge[1] = Resources::createImageResource(ctx, "volume accumulated radiance (Age) 1", froxelGridFullDimensions, VK_FORMAT_R8_UNORM, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
 
     m_volumeReservoirs[0] = Resources::createImageResource(ctx, "volume reservoir 0", restirFroxelGridFullDimensions, VK_FORMAT_R32G32B32A32_UINT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);
     m_volumeReservoirs[1] = Resources::createImageResource(ctx, "volume reservoir 1", restirFroxelGridFullDimensions, VK_FORMAT_R32G32B32A32_UINT, 1, VK_IMAGE_TYPE_3D, VK_IMAGE_VIEW_TYPE_3D);

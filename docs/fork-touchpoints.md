@@ -4361,3 +4361,12 @@ Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches f
 - **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `onFrameBegin` latches the gate; `dispatch` returns
   early when the cache is inactive; `getVolumeArgs` zeroes `volumetricConsumerGain` on skipped frames and
   resets history / temporal resampling on the first frame back; dev-menu checkbox under Volumetric Lighting.
+
+### Froxel cache textures shrink to placeholders while the cache is off
+
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `m_froxelTexturesFull`; `keepRadianceCacheWhenDisabled`
+  description mentions the freed textures.
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `onFrameBegin` latches the cache gate before
+  `RtxPass::onFrameBegin` and reallocates when `m_froxelTexturesFull` disagrees with it; `createDownscaledResource`
+  computes the logical extents first, then allocates the radiance/age/reservoir textures at 1x1x1 while the cache
+  is inactive (the logical extents still feed `VolumeArgs`).

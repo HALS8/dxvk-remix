@@ -143,7 +143,8 @@ struct WeatherSnapshot;
     // Fork (fo4/gpu-opt): escape hatch for the "disabled = zero cost" gate in RtxGlobalVolumetrics::dispatch.
     RTX_OPTION("rtx.volumetrics", bool, keepRadianceCacheWhenDisabled, false,
                "Keep building the froxel radiance cache (the five Volume Integrate compute passes) while rtx.volumetrics.enable is off.\n"
-               "Off (default): disabling volumetrics costs nothing on the GPU, and the surface consumers of the cache "
+               "Off (default): disabling volumetrics costs nothing on the GPU, the cache textures shrink to 1x1x1 placeholders "
+               "(frees ~90 MiB at a 1280x800 render resolution), and the surface consumers of the cache "
                "(opacity-lighting-approximated particles, decal/PSR diffuse approximation, stochastic alpha blend radiance-volume "
                "fallback, dust particles) receive no cache contribution (volumetricConsumerGain is forced to 0 for the frame).\n"
                "On: upstream behaviour, the cache is rebuilt every frame so those consumers keep their (volumetricConsumerGain-scaled) tint.");
@@ -330,6 +331,9 @@ struct WeatherSnapshot;
     // frames, so that frame drops the stale accumulation/reservoir history like a camera cut.
     bool m_froxelCacheActive = true;
     bool m_froxelCacheHistoryStale = false;
+    // Fork (fo4/gating): whether the froxel textures were last allocated at full grid size (cache active)
+    // or as 1x1x1 placeholders (cache off); onFrameBegin reallocates when this disagrees with the gate.
+    bool m_froxelTexturesFull = true;
 
     // Per-frame weather snapshot override. Set once per frame
     // by applyWeatherOverride() (called from rtx_context.cpp before
