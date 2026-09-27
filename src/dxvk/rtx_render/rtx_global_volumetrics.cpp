@@ -222,6 +222,36 @@ namespace dxvk {
   }
 
   namespace {
+    // Fork: consumer-only froxel cache (rtx.volumetrics.consumerCacheQuality), indexed by FroxelConsumerCacheQuality.
+    // x divides the froxel grid's x and y on top of froxelGridResolutionScale; y divides the depth slices (both the
+    // froxel and the ReSTIR grid). The ReSTIR grid's x and y follow the froxel grid through restirGridScale.
+    // Off never reaches the table as a reduction (it means the full-size cache there).
+    const uint2 kConsumerCacheDivisors[] = {
+      uint2(1, 1), // Off (full size)
+      uint2(4, 2), // Low
+      uint2(2, 2), // Medium
+      uint2(2, 1), // High
+    };
+
+    RemixGui::ComboWithKey<FroxelConsumerCacheQuality> consumerCacheQualityCombo {
+      "Froxel Cache While Disabled",
+      RemixGui::ComboWithKey<FroxelConsumerCacheQuality>::ComboEntries { {
+          {FroxelConsumerCacheQuality::Off, "Off (fastest, particles lose cache light)"},
+          {FroxelConsumerCacheQuality::Low, "Low"},
+          {FroxelConsumerCacheQuality::Medium, "Medium"},
+          {FroxelConsumerCacheQuality::High, "High"},
+      } }
+    };
+  }
+
+  void RtxGlobalVolumetrics::showConsumerCacheQualityCombo() {
+    // Only meaningful while volumetrics are off and the full cache is not being kept.
+    ImGui::BeginDisabled(enable() || keepRadianceCacheWhenDisabled());
+    consumerCacheQualityCombo.getKey(&consumerCacheQualityObject());
+    ImGui::EndDisabled();
+  }
+
+  namespace {
     void dragFloatWithWeatherOverride(const char* label, RtxOption<float>* opt,
                                       const float* weatherOverride,
                                       float speed, float minValue, float maxValue,
@@ -360,6 +390,11 @@ namespace dxvk {
       ImGui::BeginDisabled(enable());
       RemixGui::Checkbox("Keep Froxel Cache When Disabled", &keepRadianceCacheWhenDisabledObject());
       ImGui::EndDisabled();
+      showConsumerCacheQualityCombo();
+      if (!enable()) {
+        ImGui::TextDisabled("Froxel cache: %s, %ux%ux%u", m_froxelCacheActive ? "active" : "skipped",
+                            m_froxelVolumeExtent.width, m_froxelVolumeExtent.height, m_froxelVolumeExtent.depth);
+      }
       {
         ImGui::Indent();
         ImGui::BeginDisabled(!enable());
@@ -980,9 +1015,14 @@ namespace dxvk {
     // mid-frame; getVolumeArgs and dispatch must agree).
     // Fork (fo4/gating): latched before RtxPass::onFrameBegin, which creates the textures on the first
     // frame, so that first allocation is already sized for the gate (see createDownscaledResource).
-    const bool cacheActive = enable() || keepRadianceCacheWhenDisabled();
-    m_froxelCacheHistoryStale = cacheActive && !m_froxelCacheActive;
+    // Fork: with volumetrics off (and the full cache not kept) consumerCacheQuality either skips the cache or
+    // builds a reduced consumer-only one; a change of size drops history like the cache restarting does.
+    const bool fullCache = enable() || keepRadianceCacheWhenDisabled();
+    const FroxelConsumerCacheQuality reduction = fullCache ? FroxelConsumerCacheQuality::Off : consumerCacheQuality();
+    const bool cacheActive = fullCache || reduction != FroxelConsumerCacheQuality::Off;
+    m_froxelCacheHistoryStale = cacheActive && (!m_froxelCacheActive || reduction != m_froxelCacheReduction);
     m_froxelCacheActive = cacheActive;
+    m_froxelCacheReduction = reduction;
 
     RtxPass::onFrameBegin(ctx, frameBeginCtx);
 
@@ -991,18 +1031,22 @@ namespace dxvk {
     // Fork (fo4/gating): the gate flipped since the textures were created, so resize them (full grid
     // when the cache runs again, 1x1x1 placeholders when it stops). The first frame back already
     // resets history (m_froxelCacheHistoryStale), and new textures start cleared.
-    if (m_rebuildFroxels || m_froxelTexturesFull != m_froxelCacheActive) {
+    if (m_rebuildFroxels || m_froxelTexturesFull != m_froxelCacheActive || m_froxelTexturesReduction != m_froxelCacheReduction) {
       createDownscaledResource(ctx, frameBeginCtx.downscaledExtent);
     }
   }
 
   void RtxGlobalVolumetrics::createDownscaledResource(Rc<DxvkContext>& ctx, const VkExtent3D& downscaledExtent) {
+    // Fork: the consumer-only cache divides the grid further (identity for the full-size cache).
+    const uint2 divisors = kConsumerCacheDivisors[static_cast<int>(m_froxelCacheReduction)];
+    m_froxelTexturesReduction = m_froxelCacheReduction;
+
     m_froxelVolumeExtent = util::computeBlockCount(downscaledExtent, VkExtent3D {
-      froxelGridResolutionScale(),
-      froxelGridResolutionScale(),
+      froxelGridResolutionScale() * divisors.x,
+      froxelGridResolutionScale() * divisors.x,
       1
     });
-    m_froxelVolumeExtent.depth = froxelDepthSlices();
+    m_froxelVolumeExtent.depth = std::max(froxelDepthSlices() / divisors.y, 1u);
     m_numFroxelVolumes = enableInPortals() ? maxRayPortalCount + 1 : 1;
 
     VkExtent3D froxelGridFullDimensions = m_froxelVolumeExtent;
@@ -1012,13 +1056,13 @@ namespace dxvk {
 
     // Calculate the restir grid resolution
     m_restirFroxelVolumeExtent = util::computeBlockCount(m_froxelVolumeExtent, VkExtent3D { restirGridScale(), restirGridScale(), 1 });
-    m_restirFroxelVolumeExtent.depth = restirFroxelDepthSlices();
+    m_restirFroxelVolumeExtent.depth = std::max(restirFroxelDepthSlices() / divisors.y, 1u);
 
     VkExtent3D restirFroxelGridFullDimensions = m_restirFroxelVolumeExtent;
     restirFroxelGridFullDimensions.width *= m_numFroxelVolumes;
 
-    // Fork (fo4/gating): with the froxel cache off (rtx.volumetrics.enable = False and
-    // keepRadianceCacheWhenDisabled off) no pass writes these textures, composite skips them on
+    // Fork (fo4/gating): with the froxel cache off (rtx.volumetrics.enable = False,
+    // keepRadianceCacheWhenDisabled off and consumerCacheQuality Off) no pass writes these textures, composite skips them on
     // volumeArgs.enable, and the evalVolumetricNEE surface consumers multiply what they sample by a
     // volumetricConsumerGain that getVolumeArgs forces to 0 (only the volumetric debug views read them raw). So they are allocated as cleared
     // 1x1x1 placeholders that keep every binding valid (~92 MiB saved at 1280x800, grid scale 4, 48 slices).

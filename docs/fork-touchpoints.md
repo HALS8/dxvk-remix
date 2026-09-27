@@ -4370,3 +4370,18 @@ Ported from the private FO4 development fork (Kim2091/dxvk-remix-fo4, branches f
   `RtxPass::onFrameBegin` and reallocates when `m_froxelTexturesFull` disagrees with it; `createDownscaledResource`
   computes the logical extents first, then allocates the radiance/age/reservoir textures at 1x1x1 while the cache
   is inactive (the logical extents still feed `VolumeArgs`).
+
+### Consumer-only froxel cache while volumetrics are off
+
+Skipping the cache left particles, decals, the PSR diffuse approximation, the stochastic alpha blend fallback and
+dust without cache light. `rtx.volumetrics.consumerCacheQuality` (Off / Low / Medium / High, default Medium) now
+builds a reduced cache for those readers instead; Off keeps the skip. The readers look the cache up by normalized
+UVW from `VolumeArgs`, so a smaller grid needs no shader change.
+
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.h`** - `FroxelConsumerCacheQuality` enum, `consumerCacheQuality`
+  option, `m_froxelCacheReduction` / `m_froxelTexturesReduction`, `showConsumerCacheQualityCombo()`.
+- **`src/dxvk/rtx_render/rtx_global_volumetrics.cpp`** - `kConsumerCacheDivisors` (x/y divisor on top of
+  `froxelGridResolutionScale`, depth-slice divisor for both grids); `onFrameBegin` latches the reduction with the
+  gate and drops history when it changes; `createDownscaledResource` applies the divisors; dev-menu combo and grid
+  readout under Volumetric Lighting.
+- **`src/dxvk/imgui/rtx_user_menu.cpp`** - the same combo in the user graphics menu under RTX Volumetrics Settings.

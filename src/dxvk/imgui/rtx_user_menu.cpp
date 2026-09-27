@@ -592,6 +592,8 @@ namespace dxvk {
       ImGui::Indent(static_cast<float>(subItemIndent));
       common->metaGlobalVolumetrics().showImguiUserSettings();
       ImGui::EndDisabled();
+      // Fork: how much of the froxel cache to keep for particles and decals while volumetrics are off.
+      RtxGlobalVolumetrics::showConsumerCacheQualityCombo();
       ImGui::Unindent(static_cast<float>(subItemIndent));
     }
 
