@@ -74,6 +74,8 @@
 #define COMPOSITE_ATMOSPHERE_CLOUD_DEPTH_INPUT                      64
 #define COMPOSITE_ATMOSPHERE_AERIAL_PERSPECTIVE_LOCAL_INPUT         69
 #define COMPOSITE_ATMOSPHERE_FOREGROUND_INPUT                      70
+// Virtual hit distance of the secondary (PSR) surface, -1 on a miss. Aerial perspective on PSR pixels.
+#define COMPOSITE_SECONDARY_HIT_DISTANCE_INPUT                     71
 
 // Inputs/Outputs
 

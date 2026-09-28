@@ -126,6 +126,10 @@ namespace dxvk {
         TEXTURE3D(COMPOSITE_ATMOSPHERE_AERIAL_PERSPECTIVE_INPUT)
         SAMPLER(COMPOSITE_ATMOSPHERE_AERIAL_PERSPECTIVE_SAMPLER)
         TEXTURE3D(COMPOSITE_ATMOSPHERE_AERIAL_PERSPECTIVE_LOCAL_INPUT)
+        // Fork (2026-09-27): these two were read by the shader but never declared here, so DXVK
+        // remapped them to an invalid binding and AtmosphereForeground read as garbage/zero.
+        TEXTURE2D(COMPOSITE_ATMOSPHERE_FOREGROUND_INPUT)
+        TEXTURE2D(COMPOSITE_SECONDARY_HIT_DISTANCE_INPUT)
 
         // Cloud composite (fork — 2026-09-05, world-space cloud migration Stage 4b). See
         // applyCloudComposite in composite.comp.slang / the doc comment on these slots in
@@ -328,6 +332,7 @@ namespace dxvk {
     ctx->bindResourceView(COMPOSITE_SHARED_RADIANCE_RG_INPUT, rtOutput.m_sharedRadianceRG.view, nullptr);
     ctx->bindResourceView(COMPOSITE_SHARED_RADIANCE_B_INPUT, rtOutput.m_sharedRadianceB.view, nullptr);
     ctx->bindResourceView(COMPOSITE_ATMOSPHERE_FOREGROUND_INPUT, rtOutput.m_atmosphereForeground.view, nullptr);
+    ctx->bindResourceView(COMPOSITE_SECONDARY_HIT_DISTANCE_INPUT, rtOutput.m_secondaryHitDistance.view, nullptr);
     
     ctx->bindResourceView(COMPOSITE_PRIMARY_ATTENUATION_INPUT, rtOutput.m_primaryAttenuation.view, nullptr);
     
