@@ -806,7 +806,11 @@ void applyCloudComposite(
   inout vec3 foregroundRadiance,
   float foregroundDepthKm,
   // Reflected rays already received their cloud contribution during path tracing.
-  bool performedPSR)
+  bool performedPSR,
+  // Fork (2026-09-27): camera distance of the PSR surface in km, 0 when unknown. Clouds BEYOND a
+  // PSR surface arrive along the replaced paths; the cloud IN FRONT of it does not, and without
+  // this it was dropped along with the rest - water under a low deck read as a hole in it.
+  float psrSurfaceKm)
 {
   AtmosphereArgs args = cb.atmosphereArgs;
   if (args.cloudRenderRTEnable == 0u)
@@ -820,8 +824,18 @@ void applyCloudComposite(
   const float meanKm = depthKm.y;
   const vec4 cloudSample = CompositeCloudRender.Load(int3(pixelCoordinate, 0));
   vec4 cloud = vec4(cloudSample.rgb, 1.0f - cloudSample.a);
-  // PSR already carries clouds along the reflected ray.
-  float opaqueVisibility = performedPSR ? 0.0f : 1.0f;
+  // PSR already carries clouds along the reflected ray; only the part in front of the surface is
+  // composited here, estimated with the same depth-ratio rule the foreground uses, at full weight
+  // (it is in front of every path the surface splits into).
+  float opaqueVisibility = 1.0f;
+  if (performedPSR) {
+    opaqueVisibility = (psrSurfaceKm > 0.0f && entryKm >= 0.0f)
+      ? cloudDepthVisibility(entryKm, meanKm, psrSurfaceKm, cloud.a)
+      : 0.0f;
+    if (psrSurfaceKm > 0.0f) {
+      radianceThroughput = vec3(1.0f);
+    }
+  }
 
   // ---- Aerial perspective on the cloud (fork -- 2026-09-08) ----
   //
@@ -1083,46 +1097,55 @@ vec4 compositeResult(
       saturate(vec3(1.0f) - primaryAttenuation), foregroundRadiance);
   }
 
-  // PSR surfaces (fork -- 2026-09-27). On a PSR pixel the primary "surface" is the replaced path:
-  // viewDistance is its virtual distance (or the miss sentinel's), and primaryAttenuation - the
-  // in-scatter weight below - is that path's share of the surface: the transmission through murky
-  // water is a few percent, a Fresnel reflection little more. The in-scatter of the air between the
-  // camera and the surface belongs to the whole pixel, though, not to one path, so distant water came
-  // out nearly unhazed - a hole in the aerial perspective the terrain around it did not have. The
-  // geometry resolver leaves the PSR surface's own distance in AtmosphereForeground.w for this:
-  //   * a PSR primary path that missed (sky reflection, refraction with nothing behind it) is hazed
-  //     at the surface, not across the whole column its sentinel distance would read;
-  //   * the share of the in-scatter the primary path does not carry, 1 - primaryAttenuation, is
-  //     added in front of the surface. Paths that stay in air (clear glass, mirrors) keep receiving
-  //     the far air at their virtual distance through the primary weight, as before.
+  // PSR surfaces (fork -- 2026-09-27). On a PSR pixel (water, glass, mirrors) the pixel is the sum
+  // of up to two replaced paths plus shared radiance (sky seen along a path that missed, emission,
+  // the diffuse layer), and each needs its own aerial perspective:
+  //   * a path that HIT something, at its own virtual distance (camera -> surface -> hit), weighted
+  //     by its own attenuation: a mountain seen in the water is as hazy as the mountain;
+  //   * everything else - shared radiance, and the share of the in-scatter no hit path carries - at
+  //     the PSR surface's own distance, which is where the air in front of the pixel ends. A path
+  //     that missed carries sky radiance, which already integrates the column beyond the surface.
+  // The old single transform applied the primary path's attenuation as the in-scatter weight of the
+  // whole pixel. For water the primary path is the transmission - a few percent through murky water
+  // - so distant water received almost none of the haze in front of it, and a reflection that hit
+  // the far shore received none of its own: a hole in the aerial perspective. The PSR surface
+  // distance comes from AtmosphereForeground.w (written by the geometry resolver on PSR pixels).
   const bool psrAerialSurface = geometryFlags.performedAnyPSR() &&
                                 foreground.w > 0.0f &&
                                 cb.atmosphereArgs.aerialPerspectivePsrFrontInScatter > 0.0f;
-  float mainAerialDistance = viewDistance;
-  vec3 mainAerialVolumeAttenuation = volumeAttenuation;
-  float psrSurfaceDistance = 0.0f;
-  vec3 psrSurfaceVolumeAttenuation = vec3(1.0f);
   if (psrAerialSurface) {
-    psrSurfaceDistance = foreground.w * cb.atmosphereArgs.worldUnitsPerKm;
-    psrSurfaceVolumeAttenuation = calcVolumetricAttenuation(cb.volumeArgs, none, false,
+    const float psrSurfaceDistance = foreground.w * cb.atmosphereArgs.worldUnitsPerKm;
+    const vec3 psrSurfaceVolumeAttenuation = calcVolumetricAttenuation(cb.volumeArgs, none, false,
       psrSurfaceDistance, cameraGetWorldPosition(cb.camera), primaryRayDirections.worldDirection);
-    if (primaryLinearViewZ == cb.primaryDirectMissLinearViewZ) {
-      mainAerialDistance = psrSurfaceDistance;
-      mainAerialVolumeAttenuation = psrSurfaceVolumeAttenuation;
-    }
-  }
 
-  // Applied before the sky so it only affects geometry; the sky already carries its full column.
-  // Background radiance already carries foreground transparency from the geometry resolver.
-  applyAerialPerspective(pixelCoordinate, primaryMiss, mainAerialDistance, mainAerialVolumeAttenuation,
-    primaryAttenuation, radianceOutput);
-  if (psrAerialSurface) {
-    // In front of the surface, so added after (not attenuated by) the transform above.
-    vec3 psrFrontInScatter = vec3(0.0f);
+    const bool primaryHit = primaryLinearViewZ != cb.primaryDirectMissLinearViewZ;
+    const float secondaryHitDistance = geometryFlags.secondarySurfaceMask ? SecondaryHitDistance[pixelCoordinate] : -1.0f;
+    const bool secondaryHit = secondaryHitDistance > 0.0f;
+
+    vec3 primaryPart = primaryHit ? remodulatedTotalPrimaryRadiance * volumeAttenuation : vec3(0.0f);
+    vec3 secondaryPart = secondaryHit ? remodulatedTotalSecondaryRadiance * volumeAttenuation : vec3(0.0f);
+    vec3 restPart = radianceOutput - primaryPart - secondaryPart;
+
+    const vec3 primaryWeight = primaryHit ? saturate(primaryAttenuation) : vec3(0.0f);
+    const vec3 secondaryWeight = secondaryHit ? saturate(secondaryAttenuation) : vec3(0.0f);
+
+    if (primaryHit) {
+      applyAerialPerspective(pixelCoordinate, false, viewDistance, volumeAttenuation,
+        primaryWeight, primaryPart);
+    }
+    if (secondaryHit) {
+      applyAerialPerspective(pixelCoordinate, false, secondaryHitDistance, volumeAttenuation,
+        secondaryWeight, secondaryPart);
+    }
     applyAerialPerspective(pixelCoordinate, false, psrSurfaceDistance, psrSurfaceVolumeAttenuation,
-      saturate(vec3(1.0f) - primaryAttenuation) * cb.atmosphereArgs.aerialPerspectivePsrFrontInScatter,
-      psrFrontInScatter);
-    radianceOutput += psrFrontInScatter;
+      saturate(vec3(1.0f) - primaryWeight - secondaryWeight), restPart);
+
+    radianceOutput = primaryPart + secondaryPart + restPart;
+  } else {
+    // Applied before the sky so it only affects geometry; the sky already carries its full column.
+    // Background radiance already carries foreground transparency from the geometry resolver.
+    applyAerialPerspective(pixelCoordinate, primaryMiss, viewDistance, volumeAttenuation,
+      primaryAttenuation, radianceOutput);
   }
   if (alphaBlendSurfaceValid) {
     applyAerialPerspective(pixelCoordinate, false, alphaBlendHitDistance, alphaVolumeAttenuation,
@@ -1146,7 +1169,7 @@ vec4 compositeResult(
     pixelCoordinate, primaryMiss, viewDistance, backgroundAlpha, primaryAttenuation,
     radianceOutput, alphaBlendOutput, alphaBlendSurfaceValid, alphaBlendHitDistance,
     foregroundRadiance, separateForeground ? foreground.w : 0.0f,
-    geometryFlags.performedAnyPSR());
+    geometryFlags.performedAnyPSR(), psrAerialSurface ? foreground.w : 0.0f);
   radianceOutput += foregroundRadiance;
 
   // Add sky radiance
