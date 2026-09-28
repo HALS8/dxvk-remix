@@ -58,6 +58,7 @@ layout(r16f, binding = GBUFFER_BINDING_SHARED_RADIANCE_B_OUTPUT)
 RWTexture2D<float> SharedRadianceB;
 
 // RGB excludes the sky; W is the nearest contributing transparent depth in kilometres.
+// On PSR pixels W is instead the PSR surface's own depth (geometryResolverStorePsrAerialSurfaceDistance).
 layout(rgba16f, binding = GBUFFER_BINDING_ATMOSPHERE_FOREGROUND_OUTPUT)
 RWTexture2D<float4> AtmosphereForeground;
 

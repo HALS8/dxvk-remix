@@ -1715,6 +1715,25 @@ void updateNrcOnGBufferHitTrainingAndQueryPaths(
 #endif
 }
 
+// Fork (2026-09-27): camera-to-surface distance of a PSR surface (water, glass), for the composite's
+// aerial perspective. Once PSR replaces the primary surface, every G-buffer distance describes the
+// replaced path (the virtual distance down the refraction / along the reflection, or the miss
+// sentinel), so nothing downstream knows where the air in front of the surface ends. The composite
+// ignores AtmosphereForeground's rgb/w on PSR pixels otherwise (see separateForeground), so its w
+// is free to carry this distance there - overwriting any nearer unordered contributor's distance,
+// which is not used on a PSR pixel.
+void geometryResolverStorePsrAerialSurfaceDistance(uvec2 pixelCoordinate, float surfaceHitDistance)
+{
+  if (cb.skyMode != 1)
+  {
+    return;
+  }
+
+  vec4 foreground = AtmosphereForeground[pixelCoordinate];
+  foreground.w = max(surfaceHitDistance / max(cb.atmosphereArgs.worldUnitsPerKm, 1e-6f), 1e-5f);
+  AtmosphereForeground[pixelCoordinate] = foreground;
+}
+
 void geometryResolverVertex(
   EmptyExtraArgs extraArgs, RayHitInfo rayHitInfo,
   inout GeometryResolverState geometryResolverState)
@@ -2264,6 +2283,7 @@ void geometryResolverVertex(
     PrimaryConeRadius[geometryResolverState.pixelCoordinate] = rayInteraction.coneRadius;
     PrimaryHitDistance[geometryResolverState.pixelCoordinate] = geometryResolverState.accumulatedHitDistance;
     SecondaryHitDistance[geometryResolverState.pixelCoordinate] = geometryResolverState.accumulatedHitDistance;
+    geometryResolverStorePsrAerialSurfaceDistance(geometryResolverState.pixelCoordinate, geometryResolverState.accumulatedHitDistance);
 
     // The actual threshold value will be set when storing gbuffer data for the PSR resolved primary surface.
     // Right now we just set the flag to carry over alternate threshold being set to the PSR pass.
@@ -3553,6 +3573,8 @@ void geometryPSRPreparePass(ivec2 pixelCoordinate) {
 
   SecondaryHitDistance[pixelCoordinate] = PrimaryHitDistance[pixelCoordinate];
   PrimaryDisocclusionThresholdMix[pixelCoordinate] = useAlternateDisocclusionThreshold ? 1.0f : 0.0f;
+  // PrimaryHitDistance still holds the first-hit (PSR surface) distance the G-buffer pass wrote.
+  geometryResolverStorePsrAerialSurfaceDistance(pixelCoordinate, PrimaryHitDistance[pixelCoordinate]);
 
   if (!geometryFlags.secondarySurfaceMask)
   {

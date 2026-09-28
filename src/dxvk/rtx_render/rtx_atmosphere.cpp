@@ -535,6 +535,7 @@ namespace {
     // Composite-only, read after every bake has run, so it must not key the LUT cascade.
     args.aerialPerspectiveNearFadeStart = 0.0f;
     args.aerialPerspectiveNearFadeEnd = 0.0f;
+    args.aerialPerspectivePsrFrontInScatter = 0.0f;
     // Composite-only as well (fork -- 2026-09-08): the cloud's share of this volume's in-scatter is
     // applied in applyCloudComposite, long after every bake has run. Leaving it in the key would
     // re-bake the whole LUT cascade on a slider drag for nothing.
@@ -1429,6 +1430,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     // zeroed with it in normalizeForSkyLutCache; no bake reads it.
     args.cloudAerialInScatterStrength =
       std::min(std::max(RtxAtmosphere::cloudAerialInScatterStrength(), 0.0f), 1.0f);
+    // PSR surfaces' share of the in-scatter in front of them (composite-only, see
+    // applyAerialPerspective's PSR branch in composite.comp.slang).
+    args.aerialPerspectivePsrFrontInScatter = RtxAtmosphere::aerialPerspectivePsrSurfaces() ? 1.0f : 0.0f;
     args.aerialPerspectiveLutSize = RtxAtmosphere::aerialPerspective()
       ? static_cast<uint32_t>(std::max(RtxAtmosphere::aerialPerspectiveLutResolution(), 1))
       : 0u;

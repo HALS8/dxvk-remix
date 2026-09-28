@@ -1370,6 +1370,16 @@ public:
                "is then nothing baked to read. Cannot brighten cloud past the sky behind it: the "
                "volume covers a strict sub-segment of the sky's own column with a tamer forward lobe.",
                args.minValue = 0.0f, args.maxValue = 1.0f);
+    RTX_OPTION("rtx.atmosphere", bool, aerialPerspectivePsrSurfaces, true,
+               "Give reflective / refractive surfaces resolved through PSR (water, glass) the full aerial "
+               "perspective in-scatter of the air in front of them.\n"
+               "The composite weights a pixel's in-scatter by its primary path's attenuation, which on a PSR "
+               "pixel is the transmission (or reflection) share of the surface - a few percent for murky water. "
+               "The air between the camera and the surface was therefore mostly missing, and distant water read "
+               "as a hole in the haze. With this on, the remaining share of the in-scatter is added at the "
+               "surface's own distance, and a PSR path that missed (sky reflection, bottomless refraction) is "
+               "hazed at the surface distance rather than across the whole column. Requires "
+               "rtx.atmosphere.aerialPerspective.");
 
     RTX_OPTION("rtx.atmosphere", float, cloudPhaseG1, 0.8f,
                "Primary HG asymmetry; strong forward-scatter, drives silver lining at backlit edges.");

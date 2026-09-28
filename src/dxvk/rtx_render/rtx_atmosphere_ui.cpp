@@ -1302,6 +1302,11 @@ void RtxAtmosphere::showHazeSettings() {
     RemixGui::SetTooltipToLastWidgetOnHover(
       "Adds atmospheric light between you and the clouds. 0 disables it; 1 applies the full contribution.");
 
+    RemixGui::Checkbox("Haze on Water / Glass (PSR)", &RtxAtmosphere::aerialPerspectivePsrSurfacesObject());
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "Gives reflective and refractive surfaces (water, glass) the haze of the air in front of them, "
+      "so distant water no longer reads as a hole in the aerial perspective.");
+
     RemixGui::DragFloat("Range", &RtxAtmosphere::aerialPerspectiveDepthRangeMetersObject(),
       100.0f, 100.0f, 200000.0f, "%.0f m", sliderFlags);
     RemixGui::SetTooltipToLastWidgetOnHover(

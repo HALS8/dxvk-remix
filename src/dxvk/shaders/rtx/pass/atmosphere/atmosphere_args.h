@@ -689,7 +689,10 @@ struct AtmosphereArgs {
 
   // World-space origin for scene light and shadow queries. Rays use the active Camera buffer.
   vec3 cameraPosition;
-  float padAerial0;
+  // 1 when PSR pixels (water, glass) receive the in-scatter of the air in front of the PSR surface
+  // (rtx.atmosphere.aerialPerspectivePsrSurfaces), 0 for the legacy primary-path-only weighting.
+  // Composite-only; zeroed by normalizeForSkyLutCache. Rides the former padAerial0 slot.
+  float aerialPerspectivePsrFrontInScatter;
 
   // NV-DXVK start: Retain the shared layout after replacing the approximate camera basis.
   vec4 padAerialCamera0;

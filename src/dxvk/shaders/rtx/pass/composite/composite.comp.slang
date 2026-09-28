@@ -1083,10 +1083,47 @@ vec4 compositeResult(
       saturate(vec3(1.0f) - primaryAttenuation), foregroundRadiance);
   }
 
+  // PSR surfaces (fork -- 2026-09-27). On a PSR pixel the primary "surface" is the replaced path:
+  // viewDistance is its virtual distance (or the miss sentinel's), and primaryAttenuation - the
+  // in-scatter weight below - is that path's share of the surface: the transmission through murky
+  // water is a few percent, a Fresnel reflection little more. The in-scatter of the air between the
+  // camera and the surface belongs to the whole pixel, though, not to one path, so distant water came
+  // out nearly unhazed - a hole in the aerial perspective the terrain around it did not have. The
+  // geometry resolver leaves the PSR surface's own distance in AtmosphereForeground.w for this:
+  //   * a PSR primary path that missed (sky reflection, refraction with nothing behind it) is hazed
+  //     at the surface, not across the whole column its sentinel distance would read;
+  //   * the share of the in-scatter the primary path does not carry, 1 - primaryAttenuation, is
+  //     added in front of the surface. Paths that stay in air (clear glass, mirrors) keep receiving
+  //     the far air at their virtual distance through the primary weight, as before.
+  const bool psrAerialSurface = geometryFlags.performedAnyPSR() &&
+                                foreground.w > 0.0f &&
+                                cb.atmosphereArgs.aerialPerspectivePsrFrontInScatter > 0.0f;
+  float mainAerialDistance = viewDistance;
+  vec3 mainAerialVolumeAttenuation = volumeAttenuation;
+  float psrSurfaceDistance = 0.0f;
+  vec3 psrSurfaceVolumeAttenuation = vec3(1.0f);
+  if (psrAerialSurface) {
+    psrSurfaceDistance = foreground.w * cb.atmosphereArgs.worldUnitsPerKm;
+    psrSurfaceVolumeAttenuation = calcVolumetricAttenuation(cb.volumeArgs, none, false,
+      psrSurfaceDistance, cameraGetWorldPosition(cb.camera), primaryRayDirections.worldDirection);
+    if (primaryLinearViewZ == cb.primaryDirectMissLinearViewZ) {
+      mainAerialDistance = psrSurfaceDistance;
+      mainAerialVolumeAttenuation = psrSurfaceVolumeAttenuation;
+    }
+  }
+
   // Applied before the sky so it only affects geometry; the sky already carries its full column.
   // Background radiance already carries foreground transparency from the geometry resolver.
-  applyAerialPerspective(pixelCoordinate, primaryMiss, viewDistance, volumeAttenuation,
+  applyAerialPerspective(pixelCoordinate, primaryMiss, mainAerialDistance, mainAerialVolumeAttenuation,
     primaryAttenuation, radianceOutput);
+  if (psrAerialSurface) {
+    // In front of the surface, so added after (not attenuated by) the transform above.
+    vec3 psrFrontInScatter = vec3(0.0f);
+    applyAerialPerspective(pixelCoordinate, false, psrSurfaceDistance, psrSurfaceVolumeAttenuation,
+      saturate(vec3(1.0f) - primaryAttenuation) * cb.atmosphereArgs.aerialPerspectivePsrFrontInScatter,
+      psrFrontInScatter);
+    radianceOutput += psrFrontInScatter;
+  }
   if (alphaBlendSurfaceValid) {
     applyAerialPerspective(pixelCoordinate, false, alphaBlendHitDistance, alphaVolumeAttenuation,
       vec3(1.0f - backgroundAlpha), alphaBlendOutput);
