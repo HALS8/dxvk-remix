@@ -144,8 +144,10 @@ class SceneManager : public CommonDeviceObject, public ResourceCache {
     "its vertex positions, vertex shader or bone pose changed, its texcoords changed on a layout that cannot\n"
     "be refreshed in place, or its smooth-normal state flipped. A rebuild re-interleaves the vertex data,\n"
     "refits the BLAS and reruns skinning and smooth normals where they apply, so a static mesh rebuilt every\n"
-    "frame is lost performance. Each material and reason is logged once, with whether the cache entry was\n"
-    "last used by a different material, and a per-frame average by reason is logged every 600 frames.");
+    "frame is lost performance. Every 600 frames it logs per-frame rates of: rebuilds by reason and the\n"
+    "materials rebuilt most; how each draw was paired with a cached mesh (identical, the instance's own,\n"
+    "an unowned one, one taken from another instance, or new); instances moved to a different cached mesh;\n"
+    "and resets of the previous-frame vertices used for motion vectors.");
   // Fork touchpoint: the external-draw object-picking hook needs access to
   // private m_drawCallMeta. Tracked as an inline tweak in
   // docs/fork-touchpoints.md.
@@ -310,15 +312,45 @@ private:
   template<bool isNew>
   ObjectCacheState processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas);
 
-  // logRebuildReasons: why an existing mesh was rebuilt, counted per reason and logged once per material.
+  // logRebuildReasons: geometry cache events counted while the option is on and logged as
+  // per-frame rates at the end of each window of frames.
   enum class RebuildReason : uint32_t {
     Positions, VertexShader, Bones, Texcoords, SmoothNormalsState, Count
   };
-  void noteRebuild(const DrawCallState& drawCallState, const BlasEntry& blas, RebuildReason reason);
+  // The cache entry a draw call was paired with, relative to the instance the draw updates.
+  enum class Pairing : uint32_t {
+    Exact,  // Identical geometry and material.
+    Own,    // The instance's own entry, matched by heuristic.
+    Orphan, // An entry no other instance is linked to, matched by heuristic.
+    Stolen, // An entry another instance is linked to, matched by heuristic.
+    New,    // A newly allocated entry.
+    Count
+  };
+  enum class HistoryReset : uint32_t {
+    VertexLayout, // The vertex buffer size changed, so the previous vertices cannot be kept.
+    Count
+  };
+  struct MaterialRebuilds {
+    uint32_t count = 0;
+    uint32_t reasonMask = 0;
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
+    uint32_t numBones = 0;
+    bool usesVertexShader = false;
+  };
+  struct GeometryDiagnostics {
+    std::array<uint64_t, static_cast<size_t>(RebuildReason::Count)> rebuilds {};
+    std::array<uint64_t, static_cast<size_t>(Pairing::Count)> pairings {};
+    std::array<uint64_t, static_cast<size_t>(HistoryReset::Count)> historyResets {};
+    uint64_t relinks = 0;
+    std::unordered_map<XXH64_hash_t, MaterialRebuilds> rebuildsByMaterial;
+    uint32_t frames = 0;
+  };
+  void noteRebuild(const DrawCallState& drawCallState, RebuildReason reason);
+  void notePairing(DrawCallCache::CacheState cacheState, const BlasEntry& blas, const RtInstance* existingInstance);
+  void noteHistoryReset(HistoryReset reason);
   void logRebuildSummary();
-  std::array<uint64_t, static_cast<size_t>(RebuildReason::Count)> m_rebuildCounts {};
-  std::unordered_set<XXH64_hash_t> m_loggedRebuilds;
-  uint32_t m_rebuildSummaryFrames = 0;
+  GeometryDiagnostics m_geometryDiagnostics;
 
   // Consumes a draw call state and updates the scene state accordingly
   RtInstance* processDrawCallState(const Rc<DxvkContext>& ctx, 

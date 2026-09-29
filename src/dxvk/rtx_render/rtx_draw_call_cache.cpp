@@ -67,12 +67,14 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
     const bool boneHashesMatch = entry.input.getSkinningState().boneHash == drawCall.getSkinningState().boneHash;
     const bool materialHashesMatch = entry.input.getMaterialData().getHash() == drawCall.getMaterialData().getHash();
 
-    if (exactMatch(drawCall, entry) || !updatedThisFrame && (vertexDataMatches && boneHashesMatch || materialHashesMatch)) {
-      // Exact vertex match that is reusable for the current draw call,
-      // or something that hasn't been updated this frame and is similar enough.
+    if (exactMatch(drawCall, entry)) {
+      *out = &entry;
+      return CacheState::kExact;
+    } else if (!updatedThisFrame && (vertexDataMatches && boneHashesMatch || materialHashesMatch)) {
+      // Something that hasn't been updated this frame and is similar enough.
       // Matching the logic in the multi-element loop below.
       *out = &entry;
-      return CacheState::kExisted;
+      return CacheState::kSimilar;
     } else {
       // First frame of having two mismatching instances, and the first instance has already 
       // been paired with the existing BlasEntry.
@@ -91,7 +93,7 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
     BlasEntry& blas  = bucketIter->second;
     if (exactMatch(drawCall, blas)) {
       *out = &blas;
-      return CacheState::kExisted;
+      return CacheState::kExact;
     }
     if (blas.frameLastTouched == m_device->getCurrentFrameId()) {
       continue;
@@ -123,7 +125,7 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
     *out = allocateEntry(hash, drawCall);
     return CacheState::kNew;
   }
-  return CacheState::kExisted;
+  return CacheState::kSimilar;
 
 }
 

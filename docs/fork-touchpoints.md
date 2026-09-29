@@ -4659,16 +4659,33 @@ inputs is now baked once.
 One title showed ~290 meshes a frame taking the rebuild path (vertex interleave, BLAS refit, smooth
 normals) out of ~385 committed, which should be rare for static geometry. `rtx.geometry.
 logRebuildReasons` names the cause: positions, vertex shader or bone pose changed, texcoords changed
-on a layout that cannot refresh in place, or the smooth-normal state flipped. It logs each material
-and reason once, says whether the reused cache entry was last used by another material (the draw
-call cache pairing different meshes of one topology), and logs per-frame averages every 600 frames.
-The three hash comparisons in `processGeometryInfo` became named bools shared by the decision and
-the diagnostic. Diagnostic only; off by default.
+on a layout that cannot refresh in place, or the smooth-normal state flipped. The three hash
+comparisons in `processGeometryInfo` became named bools shared by the decision and the diagnostic.
+Diagnostic only; off by default.
 
-- **src/dxvk/rtx_render/rtx_scene_manager.h** - fork-touchpoint (+18 LOC). *Option, `RebuildReason`,
-  counters and logged set.*
-- **src/dxvk/rtx_render/rtx_scene_manager.cpp** - fork-touchpoint (+60 / -4 LOC). *`noteRebuild`,
-  `logRebuildSummary`, the call in `processGeometryInfo` and in `onFrameEnd`.*
+Everything is counted per window of 600 frames and logged as per-frame rates, so a log read after a
+session shows how a scene behaved over time rather than which materials were seen first:
+
+- rebuilds by reason, and the eight materials rebuilt most with their reasons and geometry shape;
+- how each draw was paired with a draw call cache entry: `exact` (identical geometry and material),
+  `own` (the drawing instance's own entry, matched by heuristic), `orphan` (an entry no live instance
+  is linked to), `stolen` (an entry another live instance is linked to - that instance is re-pointed
+  at this draw's geometry), `new`;
+- `relinks`: instances moved to a different entry;
+- history resets: previous-frame vertices replaced by the current ones (`vertexLayout`, when the
+  vertex buffer size changes).
+
+`DrawCallCache::CacheState` splits `kExisted` into `kExact` and `kSimilar` so the diagnostic can tell
+the two apart; the scene manager classifies `kSimilar` by the entry's linked instances. Counting is
+gated on the option; nothing is formatted per draw.
+
+- **src/dxvk/rtx_render/rtx_draw_call_cache.h / .cpp** - inline tweak (+8 / -4 LOC). *`CacheState`
+  `kExact` / `kSimilar`.*
+- **src/dxvk/rtx_render/rtx_scene_manager.h** - fork-touchpoint (+46 LOC). *Option, `RebuildReason`,
+  `Pairing`, `HistoryReset`, `GeometryDiagnostics`.*
+- **src/dxvk/rtx_render/rtx_scene_manager.cpp** - fork-touchpoint (+125 / -4 LOC). *`noteRebuild`,
+  `notePairing`, `noteHistoryReset`, `logRebuildSummary`; calls in `processGeometryInfo`,
+  `processDrawCallState` and `onFrameEnd`.*
 
 ---
 

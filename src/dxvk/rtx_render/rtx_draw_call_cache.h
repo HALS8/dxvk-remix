@@ -42,10 +42,12 @@ class DrawCallCache : public CommonDeviceObject {
 public:
   using MultimapType = std::unordered_multimap<XXH64_hash_t, BlasEntry, XXH64_hash_passthrough>;
 
+  // How get() paired the draw call with a BlasEntry.
   enum class CacheState
   {
-    kNew = 0,
-    kExisted = 1,
+    kNew = 0,     // A new entry was allocated.
+    kExact = 1,   // An entry holding identical geometry and material.
+    kSimilar = 2, // An entry for other geometry of the same topology, chosen by heuristic.
   };
 
   DrawCallCache(DrawCallCache const&) = delete;
