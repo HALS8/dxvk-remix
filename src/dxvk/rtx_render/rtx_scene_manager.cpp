@@ -414,6 +414,11 @@ namespace dxvk {
 
     const bool texcoordsChanged = !isNew &&
       input.hashes[HashComponents::VertexTexcoord] != inOutGeometry.hashes[HashComponents::VertexTexcoord];
+    const bool positionsChanged = !isNew &&
+      input.hashes[HashComponents::VertexPosition] != inOutGeometry.hashes[HashComponents::VertexPosition];
+    const bool vertexShaderChanged = !isNew &&
+      input.hashes[HashComponents::VertexShader] != inOutGeometry.hashes[HashComponents::VertexShader];
+    const bool bonesChanged = !isNew && drawCallState.getSkinningState().boneHash != inOutGeometry.lastBoneHash;
 
     // Determine the optimal object state for this geometry
     if (!isNew) {
@@ -421,9 +426,7 @@ namespace dxvk {
       //  'inOutGeometry' has valid historical data
       if (input.hashes[HashComponents::Indices] == inOutGeometry.hashes[HashComponents::Indices]) {
         // Position changes require a BVH refit; UV-only changes may reuse the BVH.
-        if (input.hashes[HashComponents::VertexPosition] == inOutGeometry.hashes[HashComponents::VertexPosition]
-         && input.hashes[HashComponents::VertexShader] == inOutGeometry.hashes[HashComponents::VertexShader]
-         && drawCallState.getSkinningState().boneHash == inOutGeometry.lastBoneHash) {
+        if (!positionsChanged && !vertexShaderChanged && !bonesChanged) {
           result = ObjectCacheState::kUpdateInstance;
         } else {
           result = ObjectCacheState::kUpdateBVH;
@@ -504,6 +507,15 @@ namespace dxvk {
       } else {
         result = ObjectCacheState::kUpdateBVH;
       }
+    }
+
+    if (!isNew && result == ObjectCacheState::kUpdateBVH && logRebuildReasons()) {
+      noteRebuild(drawCallState, *pBlas,
+                  positionsChanged ? RebuildReason::Positions :
+                  vertexShaderChanged ? RebuildReason::VertexShader :
+                  bonesChanged ? RebuildReason::Bones :
+                  texcoordsChanged ? RebuildReason::Texcoords :
+                  RebuildReason::SmoothNormalsState);
     }
 
     switch (result) {
@@ -600,6 +612,53 @@ namespace dxvk {
   }
 
 
+  namespace {
+    const char* rebuildReasonName(uint32_t reason) {
+      static constexpr const char* kNames[] = { "positions", "vertexShader", "bones", "texcoords", "smoothNormalsState" };
+      return reason < std::size(kNames) ? kNames[reason] : "?";
+    }
+  }
+
+  void SceneManager::noteRebuild(const DrawCallState& drawCallState, const BlasEntry& blas, RebuildReason reason) {
+    const uint32_t reasonIndex = static_cast<uint32_t>(reason);
+    ++m_rebuildCounts[reasonIndex];
+
+    const XXH64_hash_t material = drawCallState.getMaterialData().getHash();
+    if (!m_loggedRebuilds.insert(material ^ (static_cast<XXH64_hash_t>(reasonIndex) << 56)).second) {
+      return;
+    }
+
+    // A cache entry last used by another material means the draw call cache paired this draw with
+    // a different mesh of the same topology, rather than the geometry itself having changed.
+    const XXH64_hash_t previousMaterial = blas.input.getMaterialData().getHash();
+    const RasterGeometry& geometry = drawCallState.getGeometryData();
+    Logger::info(str::format(
+      "[RTX Geometry] rebuild: material 0x", std::hex, material, std::dec,
+      " reason ", rebuildReasonName(reasonIndex),
+      " | entry last used by ", previousMaterial == material ? "the same material" : "another material",
+      std::hex, " (0x", previousMaterial, ")", std::dec,
+      " | vertices ", geometry.vertexCount, " indices ", geometry.indexCount,
+      " vertexShader ", drawCallState.usesVertexShader ? 1 : 0,
+      " bones ", drawCallState.getSkinningState().numBones,
+      " smoothNormals ", drawCallState.getCategoryFlags().test(InstanceCategories::SmoothNormals) ? 1 : 0));
+  }
+
+  void SceneManager::logRebuildSummary() {
+    constexpr uint32_t kSummaryFrames = 600;
+    if (++m_rebuildSummaryFrames < kSummaryFrames) {
+      return;
+    }
+
+    std::string summary = "[RTX Geometry] rebuilds per frame over the last 600 frames:";
+    for (uint32_t i = 0; i < static_cast<uint32_t>(RebuildReason::Count); ++i) {
+      summary += str::format(" ", rebuildReasonName(i), " ", static_cast<float>(m_rebuildCounts[i]) / kSummaryFrames);
+    }
+    Logger::info(summary);
+
+    m_rebuildCounts = {};
+    m_rebuildSummaryFrames = 0;
+  }
+
   void SceneManager::onFrameEnd(Rc<DxvkContext> ctx, bool raytracedThisFrame) {
     ScopedCpuProfileZone();
 
@@ -644,6 +703,10 @@ namespace dxvk {
       m_drawCallMeta.infos[nextTick].clear();
       m_drawCallMeta.ready[nextTick] = false;
       m_drawCallMeta.ticker = nextTick;
+    }
+
+    if (logRebuildReasons() && raytracedThisFrame) {
+      logRebuildSummary();
     }
 
     m_terrainBaker->onFrameEnd(ctx);

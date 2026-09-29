@@ -4618,3 +4618,54 @@ the feedback priority list and is requested at full mips. Upstream bug, not repo
 - **src/dxvk/rtx_render/rtx_texture_manager.cpp** - inline tweak (+11 / -3 LOC).
   *`isUsedOutsideSamplerFeedback`; `addTexture` stamps the frame for a stamp-less use;
   `garbageCollection` keeps such textures off the priority list and at full mips.*
+
+---
+
+## Workstream - Persistent terrain cascade (local - 2026-09-29)
+
+The baker re-centred its cascade map on the camera every frame and re-issued every terrain draw
+into every cascade level, once per baked texture type. At 6 levels with replacement PBR textures
+that measured 9.7 ms of GPU time per frame on one title (29 draws, 0.33 ms each) - the largest
+single cost after path tracing, spent re-writing texels that had not changed.
+
+The cascade now keeps its centre until the camera moves `cascadeMap.recenterDistance` (5 m) from
+it, and each terrain draw is keyed by everything it writes: full geometry hash, world transform,
+legacy material identity (both texture stages, blend and texture ops, texture factor), the
+fixed-function material and texcoord matrices, the per-stage PS constants, and the replacement
+textures' current image views (so a streamed texture gaining mips bakes again at the new detail). A
+draw whose key is already baked under the current layout reuses its texels. The layout hash - scene
+view, per-level projections, resolutions, the height normalisation range and the material bake
+options - resets the key set, and `clearTerrainBeforeBaking` now clears only then. Reused draws
+still keep their replacement textures resident and still widen the height range; otherwise the
+range would shrink on reuse and invalidate the layout on the next frame. The height mip chain is
+rebuilt only on frames that baked something. `recenterDistance = 0` re-centres whenever the camera
+moves. Upstreamable.
+
+Not covered by the key: vertex colours and texcoord sets other than the hashed one; a game that
+animates either on terrain needs them added. A draw submitted twice in one frame with identical
+inputs is now baked once.
+
+- **src/dxvk/rtx_render/rtx_terrain_baker.h** - fork-touchpoint (+40 LOC). *`recenterDistance`
+  option; cascade centre, layout hash, baked-draw set, lost-content flag, baked/reused counters.*
+- **src/dxvk/rtx_render/rtx_terrain_baker.cpp** - fork-touchpoint (+150 / -30 LOC).
+  *`calculateDrawKey`, `calculateBakedLayoutHash`, `beginBakedContent`, `updateCascadeCenter`,
+  `accountDisplacement`, `keepReplacementTexturesResident`; `bakeDrawCall` reuses keyed draws;
+  baking parameters use the held centre; stats and slider in the Cascade Map GUI.*
+
+---
+
+## Workstream - Geometry rebuild reasons diagnostic (local - 2026-09-29)
+
+One title showed ~290 meshes a frame taking the rebuild path (vertex interleave, BLAS refit, smooth
+normals) out of ~385 committed, which should be rare for static geometry. `rtx.geometry.
+logRebuildReasons` names the cause: positions, vertex shader or bone pose changed, texcoords changed
+on a layout that cannot refresh in place, or the smooth-normal state flipped. It logs each material
+and reason once, says whether the reused cache entry was last used by another material (the draw
+call cache pairing different meshes of one topology), and logs per-frame averages every 600 frames.
+The three hash comparisons in `processGeometryInfo` became named bools shared by the decision and
+the diagnostic. Diagnostic only; off by default.
+
+- **src/dxvk/rtx_render/rtx_scene_manager.h** - fork-touchpoint (+18 LOC). *Option, `RebuildReason`,
+  counters and logged set.*
+- **src/dxvk/rtx_render/rtx_scene_manager.cpp** - fork-touchpoint (+60 / -4 LOC). *`noteRebuild`,
+  `logRebuildSummary`, the call in `processGeometryInfo` and in `onFrameEnd`.*

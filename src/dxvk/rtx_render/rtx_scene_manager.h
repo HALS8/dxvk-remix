@@ -139,6 +139,13 @@ class SceneManager : public CommonDeviceObject, public ResourceCache {
     "Refresh UV-only animation without a BLAS refit for compatible fixed-function geometry. "
     "Shader capture, skinning, smooth normals, and active opacity micromaps retain the refit path. "
     "Disable to use the conservative animation refresh path.");
+  RTX_OPTION("rtx.geometry", bool, logRebuildReasons, false,
+    "Diagnostic. Logs why a mesh already in the scene had its ray tracing geometry rebuilt rather than reused:\n"
+    "its vertex positions, vertex shader or bone pose changed, its texcoords changed on a layout that cannot\n"
+    "be refreshed in place, or its smooth-normal state flipped. A rebuild re-interleaves the vertex data,\n"
+    "refits the BLAS and reruns skinning and smooth normals where they apply, so a static mesh rebuilt every\n"
+    "frame is lost performance. Each material and reason is logged once, with whether the cache entry was\n"
+    "last used by a different material, and a per-frame average by reason is logged every 600 frames.");
   // Fork touchpoint: the external-draw object-picking hook needs access to
   // private m_drawCallMeta. Tracked as an inline tweak in
   // docs/fork-touchpoints.md.
@@ -302,6 +309,16 @@ private:
   // Handles conversion of geometry data coming from a draw call, to the data used by the raytracing backend
   template<bool isNew>
   ObjectCacheState processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas);
+
+  // logRebuildReasons: why an existing mesh was rebuilt, counted per reason and logged once per material.
+  enum class RebuildReason : uint32_t {
+    Positions, VertexShader, Bones, Texcoords, SmoothNormalsState, Count
+  };
+  void noteRebuild(const DrawCallState& drawCallState, const BlasEntry& blas, RebuildReason reason);
+  void logRebuildSummary();
+  std::array<uint64_t, static_cast<size_t>(RebuildReason::Count)> m_rebuildCounts {};
+  std::unordered_set<XXH64_hash_t> m_loggedRebuilds;
+  uint32_t m_rebuildSummaryFrames = 0;
 
   // Consumes a draw call state and updates the scene state accordingly
   RtInstance* processDrawCallState(const Rc<DxvkContext>& ctx, 
