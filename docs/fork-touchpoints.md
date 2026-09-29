@@ -4669,3 +4669,21 @@ the diagnostic. Diagnostic only; off by default.
   counters and logged set.*
 - **src/dxvk/rtx_render/rtx_scene_manager.cpp** - fork-touchpoint (+60 / -4 LOC). *`noteRebuild`,
   `logRebuildSummary`, the call in `processGeometryInfo` and in `onFrameEnd`.*
+
+---
+
+## Workstream - Camera constants out of the vertex shader hash (local - 2026-09-29)
+
+A shader-captured draw call's `VertexShader` hash covered every float constant the shader reads.
+Games that keep a view or view-projection matrix in those constants change it every frame the
+camera moves or is jittered, so every static shader-drawn mesh hashed as changed each frame:
+`logRebuildReasons` measured 260-600 rebuilds a frame from `vertexShader` alone on one title, each
+re-interleaving vertices, refitting the BLAS and rerunning smooth normals. The hash is also part of
+`VertexDataHash`, so the draw call cache's exact match failed as well and fell back to its scoring
+heuristic, pairing instances of one mesh with each other's entries. `rtx.
+vertexShaderHashIgnoredConstants` (first register, count) leaves camera-only registers out; the
+default (0, 0) keeps the original single-pass hash bit for bit. Upstreamable.
+
+- **src/d3d9/d3d9_rtx.h** - inline tweak (+7 LOC). *The option.*
+- **src/d3d9/d3d9_rtx_geometry.cpp** - inline tweak (+11 / -1 LOC). *Hashes the registers either side
+  of the ignored range.*

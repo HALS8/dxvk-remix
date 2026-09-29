@@ -213,7 +213,17 @@ namespace dxvk {
           auto& shaderByteCode = pVertexShader->GetBytecode();
           vertexShaderHash = XXH3_64bits(shaderByteCode.data(), shaderByteCode.size());
         }
-        vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], cb.meta.maxConstIndexF * sizeof(float) * 4, vertexShaderHash);
+        // Hashed as the registers either side of the ignored range, clamped to the ones the shader reads
+        const uint32_t usedConstants = cb.meta.maxConstIndexF;
+        const Vector2i ignored = vertexShaderHashIgnoredConstants();
+        const uint32_t ignoredBegin = std::min(static_cast<uint32_t>(std::max(ignored.x, 0)), usedConstants);
+        const uint32_t ignoredEnd = std::min(ignoredBegin + static_cast<uint32_t>(std::max(ignored.y, 0)), usedConstants);
+        if (ignoredEnd > ignoredBegin) {
+          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], ignoredBegin * sizeof(float) * 4, vertexShaderHash);
+          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[ignoredEnd], (usedConstants - ignoredEnd) * sizeof(float) * 4, vertexShaderHash);
+        } else {
+          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], usedConstants * sizeof(float) * 4, vertexShaderHash);
+        }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.bConsts[0], cb.meta.maxConstIndexB * sizeof(uint32_t)/32, vertexShaderHash);
       }
