@@ -128,6 +128,20 @@ vec2 convert1stCascadeTexCoordToTiledTexCoord(uvec2 cascade2DIndex, float rcpTar
   return cb.terrainArgs.rcpCascadeMapSize * (cascade2DIndex + convert1stCascadeTexCoordToTargetCascadeLevel(rcpTargetCascadeLevelScale, texcoord));
 }
 
+// Uniform <0, 1> value per surface point and frame, for dithering the cascade level transition.
+// Varies every frame so that the temporal upscaler and denoiser average the two levels.
+float cascadeTransitionNoise(vec3 position, uint frameIdx)
+{
+  uint h = (asuint(position.x) * 73856093u) ^ (asuint(position.y) * 19349663u) ^
+           (asuint(position.z) * 83492791u) ^ (frameIdx * 2654435761u);
+  h ^= h >> 16;
+  h *= 0x7feb352du;
+  h ^= h >> 15;
+  h *= 0x846ca68bu;
+  h ^= h >> 16;
+  return float(h >> 8) * (1.0 / 16777216.0);
+}
+
 // Converts from <0, 1> texture space of a first cascade into texture coords of Nth cascade of a combined tiled texture space <0, 1>
 // where cascades are stored as tiles left to right, top to bottom
 void convert1stCascadeTexCoordsToTargetCascadeLevel(uint targetCascadeLevel, inout vec2 interpolatedTexcoord, inout vec2 texcoords[3])
@@ -600,14 +614,19 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
         const vec2 textureCenterOffset = texcoordToOffsetFromTextureCenter(surfaceInteraction.textureCoordinates + maxPossiblePomOffset);
         const float maxTextureCenterOffset = length(textureCenterOffset - cb.terrainArgs.cameraOffsetFromCenter) + cb.terrainArgs.recenterMargin;
 
-        // Calculate a cascade level if sampling outside the first cascade
-        if (maxTextureCenterOffset >= 0.5)
-        {
-          // Convert the offset from <0, 0.5> to <0, 1> of the first cascade
-          const float normalizedTextureCenterOffset = maxTextureCenterOffset * 2;
+        // Convert the offset from <0, 0.5> to <0, 1> of the first cascade. Level L covers up to 2^L.
+        const float logExtent = log2(max(maxTextureCenterOffset * 2, 1e-6));
+        cascadeLevel = uint(clamp(ceil(logExtent), 0.f, float(cb.terrainArgs.maxCascadeLevel)));
 
-          // Calculate the cascade level starting from cascade level 1
-          cascadeLevel = min(ceil(log2(normalizedTextureCenterOffset)), cb.terrainArgs.maxCascadeLevel);
+        // Across the last part of each level, pick the next coarser level with a probability rising
+        // to 1 at the boundary. A hard switch shows as a line of changing detail and displacement that
+        // travels with the camera; dithered, the upscaler and denoiser blend it into a gradient.
+        const float kTransitionBand = 0.25;  // in log2 units of the level's extent
+        const float distanceToBoundary = float(cascadeLevel) - logExtent;
+        if (cascadeLevel < cb.terrainArgs.maxCascadeLevel && distanceToBoundary < kTransitionBand &&
+            cascadeTransitionNoise(surfaceInteraction.position, cb.frameIdx) >= distanceToBoundary / kTransitionBand)
+        {
+          cascadeLevel++;
         }
         // Note: This is safe to do after the Tangent space generation because it only translates and scales.  It does not change the normalized derivatives.
         convert1stCascadeTexCoordsToTargetCascadeLevel(cascadeLevel, surfaceInteraction.textureCoordinates, texcoords);

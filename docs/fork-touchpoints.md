@@ -4709,3 +4709,9 @@ camera plus `recenterDistance` as a margin: the camera is never further than tha
 the chosen level still covers the sample, and its boundaries move continuously with the camera as
 they did before. `TerrainArgs` gains `recenterMargin` and `cameraOffsetFromCenter` (raytrace_args.h,
 +6 LOC; surface_interaction.slangh, +6 / -2 LOC; `getTerrainArgs`, +5 LOC).
+
+**Dithered level transition (2026-09-29).** A hard switch between levels showed as a line of changing
+detail and displacement travelling with the camera, most visible on slopes. Across the last quarter
+(in log2 units) of each level the coarser level is picked with a probability rising to 1 at the
+boundary, from a per-point, per-frame hash (`cascadeTransitionNoise`), so the upscaler and denoiser
+blend the two (surface_interaction.slangh, +25 / -8 LOC).
