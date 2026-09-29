@@ -2301,7 +2301,7 @@ namespace dxvk {
       return;
     }
 
-    ScopedGpuProfileZone(ctx, effect->manifest.name.c_str());
+    ScopedGpuProfileZoneDynamicZ(ctx, effect->manifest.name.c_str());
     ctx->setFramePassStage(RtxFramePassStage::PostFX);
     ctx->setPushConstantBank(DxvkPushConstantBank::RTX);
 
@@ -2461,7 +2461,7 @@ namespace dxvk {
     for (size_t passIndex = 0; passIndex < effect->passes.size(); passIndex++) {
       const RtxExternalEffectPass& pass = effect->manifest.passes[passIndex];
       const CompiledPass& compiled = effect->passes[passIndex];
-      ScopedGpuProfileZone(ctx, pass.id.c_str());
+      ScopedGpuProfileZoneDynamicZ(ctx, pass.id.c_str());
 
       // Binding 0 is the colour this pass reads, which is the scene input
       // unless the pass asked for what the effect has written so far. Both are
