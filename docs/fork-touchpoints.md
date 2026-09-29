@@ -4687,3 +4687,8 @@ default (0, 0) keeps the original single-pass hash bit for bit. Upstreamable.
 - **src/d3d9/d3d9_rtx.h** - inline tweak (+7 LOC). *The option.*
 - **src/d3d9/d3d9_rtx_geometry.cpp** - inline tweak (+11 / -1 LOC). *Hashes the registers either side
   of the ignored range.*
+
+`rtx.logChangingVertexShaderConstants` (diagnostic, off by default) measures which registers need
+ignoring: it keeps each shader-captured draw's float constants, identified by shader, buffer ranges
+and its occurrence within the frame, and every 600 frames logs how often each register changed since
+that draw's previous frame (d3d9_rtx.h +12 LOC, d3d9_rtx_geometry.cpp +60 LOC, d3d9_rtx.cpp +4 LOC).

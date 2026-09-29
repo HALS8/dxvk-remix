@@ -1510,6 +1510,10 @@ namespace dxvk {
     m_stagedBones.clear();
     ++m_d3d9FrameIndex;
     trimVertexCaptureBufferPool();
+    if (logChangingVertexShaderConstants()) {
+      m_vsDrawOccurrencesThisFrame.clear();
+      logVertexShaderConstantChanges();
+    }
   }
 
   void D3D9Rtx::OnPresent(const Rc<DxvkImage>& targetImage) {

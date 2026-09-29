@@ -136,6 +136,71 @@ namespace dxvk {
     }
   }
 
+  // A draw call is recognised across frames by its shader and the buffer ranges it reads, so the
+  // comparison is between the same mesh's constants on consecutive frames.
+  void D3D9Rtx::noteVertexShaderConstants(const RasterGeometry& geoData, uint32_t usedConstants) {
+    struct DrawIdentity {
+      const void* shader;
+      const void* vertexBuffer;
+      size_t vertexOffset;
+      const void* indexBuffer;
+      size_t indexOffset;
+      uint32_t vertexCount;
+      uint32_t indexCount;
+    } identity {
+      d3d9State().vertexShader->GetCommonShader(),
+      geoData.positionBuffer.buffer().ptr(), geoData.positionBuffer.offset() + geoData.positionBuffer.offsetFromSlice(),
+      geoData.indexBuffer.buffer().ptr(), geoData.indexBuffer.offset(),
+      geoData.vertexCount, geoData.indexCount
+    };
+    // Instances of one mesh share all of the above and differ only in their constants; the order they
+    // are submitted in within a frame is what tells them apart.
+    const XXH64_hash_t identityHash = XXH3_64bits(&identity, sizeof(identity));
+    const uint32_t occurrence = m_vsDrawOccurrencesThisFrame[identityHash]++;
+    const XXH64_hash_t key = XXH3_64bits_withSeed(&occurrence, sizeof(occurrence), identityHash);
+
+    const uint32_t count = std::min(usedConstants, caps::MaxFloatConstantsVS);
+    const Vector4* current = &d3d9State().vsConsts.fConsts[0];
+
+    // Bounded: ring-buffered geometry gets a new identity every frame and would otherwise accumulate.
+    constexpr size_t kMaxTrackedDraws = 16384;
+    if (m_previousVsConstants.size() >= kMaxTrackedDraws) {
+      m_previousVsConstants.clear();
+    }
+
+    auto [entry, inserted] = m_previousVsConstants.try_emplace(key);
+    std::vector<Vector4>& previous = entry->second;
+    if (!inserted && previous.size() == count) {
+      ++m_vsConstantDrawsCompared;
+      for (uint32_t i = 0; i < count; ++i) {
+        if (std::memcmp(&previous[i], &current[i], sizeof(Vector4)) != 0) {
+          ++m_vsConstantChanges[i];
+        }
+      }
+    }
+    previous.assign(current, current + count);
+  }
+
+  void D3D9Rtx::logVertexShaderConstantChanges() {
+    constexpr uint32_t kSummaryFrames = 600;
+    if (m_d3d9FrameIndex % kSummaryFrames != 0 || m_vsConstantDrawsCompared == 0) {
+      return;
+    }
+
+    std::string summary = str::format("[RTX VS constants] ", m_vsConstantDrawsCompared,
+                                      " draw comparisons; registers changed since the draw's previous frame:");
+    for (uint32_t i = 0; i < caps::MaxFloatConstantsVS; ++i) {
+      const float rate = static_cast<float>(m_vsConstantChanges[i]) / m_vsConstantDrawsCompared;
+      if (rate >= 0.01f) {
+        summary += str::format(" c", i, "=", static_cast<uint32_t>(rate * 100.f + 0.5f), "%");
+      }
+    }
+    Logger::info(summary);
+
+    m_vsConstantChanges = {};
+    m_vsConstantDrawsCompared = 0;
+  }
+
   Future<GeometryHashes> D3D9Rtx::computeHash(RasterGeometry& geoData, const uint32_t maxIndexValue, const XXH64_hash_t memoizationKey) {
     ScopedCpuProfileZone();
 
@@ -223,6 +288,9 @@ namespace dxvk {
           vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[ignoredEnd], (usedConstants - ignoredEnd) * sizeof(float) * 4, vertexShaderHash);
         } else {
           vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], usedConstants * sizeof(float) * 4, vertexShaderHash);
+        }
+        if (logChangingVertexShaderConstants()) {
+          noteVertexShaderConstants(geoData, usedConstants);
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.bConsts[0], cb.meta.maxConstIndexB * sizeof(uint32_t)/32, vertexShaderHash);

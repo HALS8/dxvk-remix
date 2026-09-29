@@ -58,6 +58,11 @@ namespace dxvk {
                "marks every static shader-drawn mesh as changed each frame, which rebuilds its ray tracing geometry and defeats the\n"
                "draw call cache's exact match. Only name registers that hold camera-only data: world, bone and animation constants\n"
                "must stay hashed or moving geometry stops updating. (0, 0) hashes every constant.");
+    RTX_OPTION("rtx", bool, logChangingVertexShaderConstants, false,
+               "Diagnostic for rtx.vertexShaderHashIgnoredConstants. Compares each shader-captured draw call's vertex shader float\n"
+               "constants with the same draw call's on the previous frame, and every 600 frames logs how often each register\n"
+               "changed. A register that changes for nearly every draw while the scene is static holds camera or time data,\n"
+               "and is what keeps static meshes rebuilding.");
     RTX_OPTION("rtx", bool, poolVertexCaptureBuffers, false, "CPU cost (standard D3D9 draw path, shader vertex capture). Every shader-capture draw created a new device-local 'Vertex Capture Buffer'. With this on, buffers are kept in power-of-two size classes and reused once nothing refers to them any more (no draw state or BLAS input holds them and the GPU is done with them); unused ones are released after ~300 frames. Same contents are written. Off = original behaviour.");
     RTX_OPTION("rtx", bool, geometryHashMemoInline, false, "CPU cost (standard D3D9 draw path), with rtx.enableGeometryHashMemoization. A memo hit still scheduled a geometry-worker task that only returned the memoized value, and the CS thread waited on it. With this on the memoized hashes are handed to the CS thread with the draw, no worker round trip. Same hashes. Off = original behaviour.");
     RTX_OPTION("rtx", uint32_t, geometryHashMemoSelfCheckFrames, 0, "Correctness check for rtx.enableGeometryHashMemoization. Every N D3D9 frames every memo hit is re-hashed in full and compared with the memoized value; a mismatch (a buffer write that did not bump the buffer's content version) logs [GeometryHashMemoCheck] (first 20). The fresh hash is used on those frames. 0 = off.");
@@ -282,6 +287,15 @@ namespace dxvk {
     uint32_t m_geometryHashCacheMisses = 0;
     // D3D9 frames seen (EndFrame), for rtx.geometryHashMemoSelfCheckFrames.
     uint32_t m_d3d9FrameIndex = 0;
+
+    // rtx.logChangingVertexShaderConstants: the last constants seen per draw call, and per register
+    // how many draws found it changed since their previous frame.
+    void noteVertexShaderConstants(const RasterGeometry& geoData, uint32_t usedConstants);
+    void logVertexShaderConstantChanges();
+    std::unordered_map<XXH64_hash_t, std::vector<Vector4>> m_previousVsConstants;
+    std::unordered_map<XXH64_hash_t, uint32_t> m_vsDrawOccurrencesThisFrame;
+    std::array<uint32_t, caps::MaxFloatConstantsVS> m_vsConstantChanges {};
+    uint32_t m_vsConstantDrawsCompared = 0;
 
     // rtx.poolVertexCaptureBuffers
     struct PooledCaptureBuffer {
