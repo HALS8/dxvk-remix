@@ -69,7 +69,17 @@ namespace dxvk {
 
     uint32_t GetMaxDefinedConstant() const { return m_maxDefinedConst; }
 
+    // A vertex shader's float constant names from its constant table, indexed by register; empty
+    // where the table names none.
+    const std::vector<std::string>& GetFloatConstantNames() const { return m_floatConstantNames; }
+
+    // Float register ranges, as sorted non-overlapping [begin, end), that the vertex capture
+    // geometry hash leaves out: the constants rtx.vertexShaderHashIgnoredConstantNames names.
+    const std::vector<std::pair<uint32_t, uint32_t>>& GetHashIgnoredFloatConstants() const { return m_hashIgnoredFloatConstants; }
+
   private:
+
+    void MapFloatConstantNames(const DxsoCtab& ctab);
 
     DxsoIsgn              m_isgn;
     // NV-DXVK start: expose shader outputs for vertex capture
@@ -87,6 +97,9 @@ namespace dxvk {
 
     std::vector<uint8_t>  m_bytecode;
     uint64_t              m_bytecodeHash = 0;
+
+    std::vector<std::string>                   m_floatConstantNames;
+    std::vector<std::pair<uint32_t, uint32_t>> m_hashIgnoredFloatConstants;
 
   };
 

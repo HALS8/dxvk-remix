@@ -50,19 +50,20 @@ namespace dxvk {
     RTX_OPTION("rtx", bool, enableIndexBufferMemoization, true, "CPU performance optimization, should generally be enabled.  Will reduce main thread time by caching processIndexBuffer operations and reusing when possible, this will come at the expense of some CPU RAM.");
     RTX_OPTION("rtx", bool, enableGeometryHashMemoization, true, "CPU performance optimization.  Caches the full vertex/index content hash for a draw call and reuses it while none of the source buffers have been written, instead of re-hashing identical geometry every frame.  Defaults to off: the geometry hash drives all asset replacement matching, so a missed invalidation would mismatch replacements rather than merely cost performance.  Only applies to fixed-function draw calls; shader-capture draws always re-hash.");
     RTX_OPTION("rtx", bool, cacheShaderBytecodeHash, true, "CPU cost (standard D3D9 draw path, shader vertex capture). The vertex shader bytecode was hashed (XXH3) on every shader-capture draw for the geometry hash. With this on the hash computed once when the shader was created is used. Same value. Off = original behaviour.");
-    RTX_OPTION("rtx", Vector2i, vertexShaderHashIgnoredConstants, Vector2i(0, 0),
-               "Vertex shader float constants left out of a shader-captured draw call's geometry hash, as (first register, count).\n"
-               "The hash covers every constant the shader reads, because any of them may move the vertices it outputs. A constant\n"
-               "that holds only the camera - a view or view-projection matrix - changes the captured clip-space output but not the\n"
-               "world-space geometry Remix recovers from it, yet it changes every frame the camera moves or is jittered. Hashing it\n"
-               "marks every static shader-drawn mesh as changed each frame, which rebuilds its ray tracing geometry and defeats the\n"
-               "draw call cache's exact match. Only name registers that hold camera-only data: world, bone and animation constants\n"
-               "must stay hashed or moving geometry stops updating. (0, 0) hashes every constant.");
+    RTX_OPTION("rtx", std::string, vertexShaderHashIgnoredConstantNames, "",
+               "Comma-separated vertex shader constant names, as the shaders' constant tables name them, left out of a shader-captured\n"
+               "draw call's geometry hash. The hash covers every float constant the shader reads, because any of them may move the\n"
+               "vertices it outputs. A constant holding only camera data - a view or view-projection matrix, the eye position - changes\n"
+               "the captured clip-space output but not the world-space geometry Remix recovers from it, yet it changes every frame the\n"
+               "camera moves. Hashing it marks every static shader-drawn mesh as changed each frame, which rebuilds its ray tracing\n"
+               "geometry and defeats the draw call cache's exact match. Names rather than registers, because a game assigns registers\n"
+               "per shader. Only list constants that cannot move vertices: world, bone, time and wind constants must stay hashed or\n"
+               "moving geometry stops updating. Read when a shader is created, so set it at launch. Empty hashes every constant.");
     RTX_OPTION("rtx", bool, logChangingVertexShaderConstants, false,
-               "Diagnostic for rtx.vertexShaderHashIgnoredConstants. Compares each shader-captured draw call's vertex shader float\n"
-               "constants with the same draw call's on the previous frame, and every 600 frames logs how often each register\n"
-               "changed. A register that changes for nearly every draw while the scene is static holds camera or time data,\n"
-               "and is what keeps static meshes rebuilding.");
+               "Diagnostic for rtx.vertexShaderHashIgnoredConstantNames. Compares each shader-captured draw call's vertex shader float\n"
+               "constants with the same draw call's on the previous frame, and every 600 frames logs, per constant name, the share of\n"
+               "draws whose value changed. A constant that changes for nearly every draw while the scene is static holds camera or\n"
+               "time data, and is what keeps static meshes rebuilding.");
     RTX_OPTION("rtx", bool, poolVertexCaptureBuffers, false, "CPU cost (standard D3D9 draw path, shader vertex capture). Every shader-capture draw created a new device-local 'Vertex Capture Buffer'. With this on, buffers are kept in power-of-two size classes and reused once nothing refers to them any more (no draw state or BLAS input holds them and the GPU is done with them); unused ones are released after ~300 frames. Same contents are written. Off = original behaviour.");
     RTX_OPTION("rtx", bool, geometryHashMemoInline, false, "CPU cost (standard D3D9 draw path), with rtx.enableGeometryHashMemoization. A memo hit still scheduled a geometry-worker task that only returned the memoized value, and the CS thread waited on it. With this on the memoized hashes are handed to the CS thread with the draw, no worker round trip. Same hashes. Off = original behaviour.");
     RTX_OPTION("rtx", uint32_t, geometryHashMemoSelfCheckFrames, 0, "Correctness check for rtx.enableGeometryHashMemoization. Every N D3D9 frames every memo hit is re-hashed in full and compared with the memoized value; a mismatch (a buffer write that did not bump the buffer's content version) logs [GeometryHashMemoCheck] (first 20). The fresh hash is used on those frames. 0 = off.");
@@ -288,13 +289,17 @@ namespace dxvk {
     // D3D9 frames seen (EndFrame), for rtx.geometryHashMemoSelfCheckFrames.
     uint32_t m_d3d9FrameIndex = 0;
 
-    // rtx.logChangingVertexShaderConstants: the last constants seen per draw call, and per register
-    // how many draws found it changed since their previous frame.
+    // rtx.logChangingVertexShaderConstants: the last constants seen per draw call, and per constant
+    // name how many compared draws read it and how many found it changed since their previous frame.
     void noteVertexShaderConstants(const RasterGeometry& geoData, uint32_t usedConstants);
     void logVertexShaderConstantChanges();
+    struct ConstantChangeCount {
+      uint32_t draws = 0;
+      uint32_t changed = 0;
+    };
     std::unordered_map<XXH64_hash_t, std::vector<Vector4>> m_previousVsConstants;
     std::unordered_map<XXH64_hash_t, uint32_t> m_vsDrawOccurrencesThisFrame;
-    std::array<uint32_t, caps::MaxFloatConstantsVS> m_vsConstantChanges {};
+    std::unordered_map<std::string, ConstantChangeCount> m_vsConstantChanges;
     uint32_t m_vsConstantDrawsCompared = 0;
 
     // rtx.poolVertexCaptureBuffers

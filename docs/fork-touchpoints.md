@@ -4676,19 +4676,28 @@ the diagnostic. Diagnostic only; off by default.
 
 A shader-captured draw call's `VertexShader` hash covered every float constant the shader reads.
 Games that keep a view or view-projection matrix in those constants change it every frame the
-camera moves or is jittered, so every static shader-drawn mesh hashed as changed each frame:
-`logRebuildReasons` measured 260-600 rebuilds a frame from `vertexShader` alone on one title, each
-re-interleaving vertices, refitting the BLAS and rerunning smooth normals. The hash is also part of
-`VertexDataHash`, so the draw call cache's exact match failed as well and fell back to its scoring
-heuristic, pairing instances of one mesh with each other's entries. `rtx.
-vertexShaderHashIgnoredConstants` (first register, count) leaves camera-only registers out; the
-default (0, 0) keeps the original single-pass hash bit for bit. Upstreamable.
+camera moves, so every static shader-drawn mesh hashed as changed each frame: `logRebuildReasons`
+measured 260-600 rebuilds a frame from `vertexShader` on one title, each re-interleaving vertices,
+refitting the BLAS and rerunning smooth normals. The hash is also part of `VertexDataHash`, so the
+draw call cache's exact match failed as well and fell back to its scoring heuristic.
 
-- **src/d3d9/d3d9_rtx.h** - inline tweak (+7 LOC). *The option.*
-- **src/d3d9/d3d9_rtx_geometry.cpp** - inline tweak (+11 / -1 LOC). *Hashes the registers either side
-  of the ignored range.*
+`rtx.vertexShaderHashIgnoredConstantNames` lists constants by the name the shaders' constant tables
+give them, because a game assigns registers per shader: one title's camera values sat at different
+registers in different shaders. Each vertex shader resolves the names to register ranges once, at
+creation, from its CTAB (`DxsoCtab` now keeps each constant's register set, so only float4 constants
+are mapped), and the hash covers the runs between them. An empty list keeps the original single-pass
+hash bit for bit. Upstreamable.
 
-`rtx.logChangingVertexShaderConstants` (diagnostic, off by default) measures which registers need
-ignoring: it keeps each shader-captured draw's float constants, identified by shader, buffer ranges
-and its occurrence within the frame, and every 600 frames logs how often each register changed since
-that draw's previous frame (d3d9_rtx.h +12 LOC, d3d9_rtx_geometry.cpp +60 LOC, d3d9_rtx.cpp +4 LOC).
+`rtx.logChangingVertexShaderConstants` (diagnostic, off by default) says which names to list: it keeps
+each shader-captured draw's float constants, identified by shader, buffer ranges and occurrence
+within the frame, and every 600 frames logs per constant name how many draws read it and how many
+found it changed since their previous frame.
+
+- **src/dxso/dxso_ctab.h / .cpp** - inline tweak (+4 LOC). *`Constant::registerSet`.*
+- **src/d3d9/d3d9_shader.h / .cpp** - inline tweak (+55 LOC). *`MapFloatConstantNames`: per-register
+  names and the merged ignored ranges.*
+- **src/d3d9/d3d9_rtx.h** - inline tweak (+25 LOC). *Both options and the diagnostic's state.*
+- **src/d3d9/d3d9_rtx_geometry.cpp** - inline tweak (+85 / -1 LOC). *Hashes around the ignored ranges;
+  `noteVertexShaderConstants`, `logVertexShaderConstantChanges`.*
+- **src/d3d9/d3d9_rtx.cpp** - inline tweak (+4 LOC). *Frame-end call of the diagnostic.*
+

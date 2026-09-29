@@ -172,10 +172,20 @@ namespace dxvk {
     std::vector<Vector4>& previous = entry->second;
     if (!inserted && previous.size() == count) {
       ++m_vsConstantDrawsCompared;
+
+      // A constant spanning several registers (a matrix, an array) counts once per draw. Registers
+      // the constant table does not name are reported by register.
+      const std::vector<std::string>& names = d3d9State().vertexShader->GetCommonShader()->GetFloatConstantNames();
+      std::unordered_map<std::string, bool> changedThisDraw;
       for (uint32_t i = 0; i < count; ++i) {
-        if (std::memcmp(&previous[i], &current[i], sizeof(Vector4)) != 0) {
-          ++m_vsConstantChanges[i];
-        }
+        const std::string name = i < names.size() && !names[i].empty() ? names[i] : str::format("c", i);
+        bool& changed = changedThisDraw[name];
+        changed = changed || std::memcmp(&previous[i], &current[i], sizeof(Vector4)) != 0;
+      }
+      for (const auto& [name, changed] : changedThisDraw) {
+        ConstantChangeCount& counts = m_vsConstantChanges[name];
+        ++counts.draws;
+        counts.changed += changed ? 1 : 0;
       }
     }
     previous.assign(current, current + count);
@@ -187,17 +197,22 @@ namespace dxvk {
       return;
     }
 
-    std::string summary = str::format("[RTX VS constants] ", m_vsConstantDrawsCompared,
-                                      " draw comparisons; registers changed since the draw's previous frame:");
-    for (uint32_t i = 0; i < caps::MaxFloatConstantsVS; ++i) {
-      const float rate = static_cast<float>(m_vsConstantChanges[i]) / m_vsConstantDrawsCompared;
-      if (rate >= 0.01f) {
-        summary += str::format(" c", i, "=", static_cast<uint32_t>(rate * 100.f + 0.5f), "%");
+    std::vector<std::pair<std::string, ConstantChangeCount>> changing;
+    for (const auto& entry : m_vsConstantChanges) {
+      if (entry.second.changed * 100 >= entry.second.draws) {
+        changing.push_back(entry);
       }
+    }
+    std::sort(changing.begin(), changing.end(), [](const auto& a, const auto& b) { return a.second.changed > b.second.changed; });
+
+    std::string summary = str::format("[RTX VS constants] ", m_vsConstantDrawsCompared,
+                                      " draw comparisons; constants changed since the draw's previous frame (changed/read):");
+    for (const auto& [name, counts] : changing) {
+      summary += str::format(" ", name, "=", counts.changed, "/", counts.draws);
     }
     Logger::info(summary);
 
-    m_vsConstantChanges = {};
+    m_vsConstantChanges.clear();
     m_vsConstantDrawsCompared = 0;
   }
 
@@ -278,17 +293,18 @@ namespace dxvk {
           auto& shaderByteCode = pVertexShader->GetBytecode();
           vertexShaderHash = XXH3_64bits(shaderByteCode.data(), shaderByteCode.size());
         }
-        // Hashed as the registers either side of the ignored range, clamped to the ones the shader reads
+        // Hashed as the runs of registers between the shader's ignored ranges, clamped to the ones it reads.
+        // With nothing ignored this is the single pass over every register, bit for bit.
         const uint32_t usedConstants = cb.meta.maxConstIndexF;
-        const Vector2i ignored = vertexShaderHashIgnoredConstants();
-        const uint32_t ignoredBegin = std::min(static_cast<uint32_t>(std::max(ignored.x, 0)), usedConstants);
-        const uint32_t ignoredEnd = std::min(ignoredBegin + static_cast<uint32_t>(std::max(ignored.y, 0)), usedConstants);
-        if (ignoredEnd > ignoredBegin) {
-          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], ignoredBegin * sizeof(float) * 4, vertexShaderHash);
-          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[ignoredEnd], (usedConstants - ignoredEnd) * sizeof(float) * 4, vertexShaderHash);
-        } else {
-          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[0], usedConstants * sizeof(float) * 4, vertexShaderHash);
+        uint32_t runBegin = 0;
+        for (const auto& [ignoredBegin, ignoredEnd] : pVertexShader->GetHashIgnoredFloatConstants()) {
+          if (ignoredBegin >= usedConstants) {
+            break;
+          }
+          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (ignoredBegin - runBegin) * sizeof(float) * 4, vertexShaderHash);
+          runBegin = std::min(ignoredEnd, usedConstants);
         }
+        vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (usedConstants - runBegin) * sizeof(float) * 4, vertexShaderHash);
         if (logChangingVertexShaderConstants()) {
           noteVertexShaderConstants(geoData, usedConstants);
         }

@@ -6,11 +6,55 @@
 #include "../dxvk/dxvk_scoped_annotation.h"
 #include "../util/xxHash/xxhash.h"
 
+#include <algorithm>
+#include <unordered_set>
+
 
 namespace dxvk {
 
   D3D9CommonShader::D3D9CommonShader()
     : m_bytecodeHash(XXH3_64bits(nullptr, 0)) {}
+
+  // Constants are ignored by name because a game assigns registers per shader: the same camera
+  // matrix can sit at different registers in different shaders, while its name does not change.
+  void D3D9CommonShader::MapFloatConstantNames(const DxsoCtab& ctab) {
+    std::unordered_set<std::string> ignoredNames;
+    for (const std::string& name : str::split(D3D9Rtx::vertexShaderHashIgnoredConstantNames(), ',')) {
+      const size_t first = name.find_first_not_of(" \t");
+      const size_t last = name.find_last_not_of(" \t");
+      if (first != std::string::npos) {
+        ignoredNames.insert(name.substr(first, last - first + 1));
+      }
+    }
+
+    for (const DxsoCtab::Constant& constant : ctab.m_constantData) {
+      if (constant.registerSet != DxsoCtab::registerSetFloat4) {
+        continue;
+      }
+      const uint32_t begin = std::min(constant.registerIndex, caps::MaxFloatConstantsVS);
+      const uint32_t end = std::min(constant.registerIndex + constant.registerCount, caps::MaxFloatConstantsVS);
+      if (end > m_floatConstantNames.size()) {
+        m_floatConstantNames.resize(end);
+      }
+      for (uint32_t r = begin; r < end; ++r) {
+        m_floatConstantNames[r] = constant.name;
+      }
+      if (begin < end && ignoredNames.count(constant.name) != 0) {
+        m_hashIgnoredFloatConstants.emplace_back(begin, end);
+      }
+    }
+
+    std::sort(m_hashIgnoredFloatConstants.begin(), m_hashIgnoredFloatConstants.end());
+    std::vector<std::pair<uint32_t, uint32_t>> merged;
+    for (const auto& range : m_hashIgnoredFloatConstants) {
+      if (!merged.empty() && range.first <= merged.back().second) {
+        merged.back().second = std::max(merged.back().second, range.second);
+      } else {
+        merged.push_back(range);
+      }
+    }
+    m_hashIgnoredFloatConstants = std::move(merged);
+  }
 
   D3D9CommonShader::D3D9CommonShader(
             D3D9DeviceEx*         pDevice,
@@ -81,6 +125,10 @@ namespace dxvk {
     m_meta      = pModule->meta();
     m_constants = pModule->constants();
     m_maxDefinedConst = pModule->maxDefinedConstant();
+
+    if (ShaderStage == VK_SHADER_STAGE_VERTEX_BIT) {
+      MapFloatConstantNames(pModule->ctab());
+    }
 
     m_shaders[0]->setShaderKey(Key);
 

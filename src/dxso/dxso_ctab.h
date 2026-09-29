@@ -30,9 +30,12 @@ namespace dxvk {
 
     struct Constant {
       std::string name;
+      uint32_t registerSet;   // D3DXREGISTER_SET: 0 bool, 1 int4, 2 float4, 3 sampler
       uint32_t registerIndex;
       uint32_t registerCount;
     };
+
+    inline static const uint32_t registerSetFloat4 = 2;
 
     std::vector<Constant> m_constantData;
   };
