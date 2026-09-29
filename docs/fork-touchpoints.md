@@ -4496,8 +4496,9 @@ states above 255), which is how a caller detects support.
   `SetSuppressedCategories`; copies the mask into the draw's `DrawCallState` beside the
   `categories = 0` reset in `internalPrepareDraw`.*
 - **src/dxvk/rtx_render/rtx_types.h** - inline tweak. *`DrawCallState::suppressedCategories`.*
-- **src/dxvk/rtx_render/rtx_types.cpp** - inline tweak (1 line). *`setCategory` refuses a
-  suppressed category.*
+- **src/dxvk/rtx_render/rtx_types.cpp** - inline tweak (2 blocks). *`setCategory` refuses a
+  suppressed category; `setupCategoriesForTexture` ORs the texture-list categories in directly
+  (cached or not, `rtx.textureCategoryCache`), so it clears the suppressed bits first.*
 - **src/dxvk/rtx_render/rtx_remix_api.cpp** - hook definition. *`fork_hooks::toRtCategories`
   forwards to the file-local `convert::toRtCategories`, so the D3D9 mask and API instances share
   one public-bit mapping.*

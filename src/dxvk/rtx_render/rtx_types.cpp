@@ -428,9 +428,11 @@ namespace dxvk {
     //                   (rtx.textureCategoryCache: the D3D9 layer passes the cached result for this texture.)
     const XXH64_hash_t& textureHash = materialData.getColorTexture().getImageHash();
 
-    // setCategory() only ever sets bits, so OR-ing the list result in is the same as setting each bit in turn.
-    categories.set(pCachedTextureListCategories != nullptr ? *pCachedTextureListCategories
-                                                           : computeTextureListCategories(textureHash));
+    // Equivalent to calling setCategory() per bit: OR in the list result minus the suppressed categories.
+    CategoryFlags listCategories = pCachedTextureListCategories != nullptr ? *pCachedTextureListCategories
+                                                                           : computeTextureListCategories(textureHash);
+    listCategories.clr(suppressedCategories);
+    categories.set(listCategories);
     setCategory(InstanceCategories::IgnoreOpacityMicromap, isUsingRaytracedRenderTarget);
   }
 
