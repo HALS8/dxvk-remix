@@ -31,6 +31,9 @@
 
 namespace dxvk {
 
+  struct D3D9FixedFunctionVS;
+  struct D3D9SharedPS;
+
   class TerrainBaker {
   public:
     TerrainBaker() { }
@@ -71,7 +74,7 @@ namespace dxvk {
                                                               "Only use this system if the game renders terrain surfaces with multiple blended surfaces on top of each other (i.e. sand mixed with dirt, grass, snow, etc.).\n"
                                                               "Requirement: the baked terrain surfaces must not be placed vertically in the game world. Horizontal surfaces will have the best image quality. Requires \"rtx.zUp\" to be set properly.");
 
-    RTX_OPTION("rtx.terrainBaker", bool, clearTerrainBeforeBaking, false, "Performs a clear on the terrain texture before it is baked to in a frame.");
+    RTX_OPTION("rtx.terrainBaker", bool, clearTerrainBeforeBaking, false, "Clears the terrain textures before the cascade map is baked from scratch, i.e. whenever it is recentered or its layout changes.");
     RTX_OPTION("rtx.terrainBaker", bool, debugDisableBaking , false, "Force disables rebaking every frame. Used for debugging only.")
     RTX_OPTION("rtx.terrainBaker", bool, logSurfaceOrientation, false,
                "Diagnostic. Logs how each baked terrain draw call is oriented, once per distinct geometry.\n"
@@ -158,7 +161,13 @@ namespace dxvk {
                       args.minValue = 1,
                       args.maxValue = 32 * 1024,
                       args.environment = "RTX_TERRAIN_BAKER_LEVEL_RESOLUTION");
-      RTX_OPTION("rtx.terrainBaker.cascadeMap", bool, expandLastCascade, true, 
+      RTX_OPTION("rtx.terrainBaker.cascadeMap", float, recenterDistance, 5.f,
+                 "How far the camera may move from the cascade map's center before the map is recentered on it [meters].\n"
+                 "Baked texels stay valid for as long as the map keeps its center and layout, so a terrain draw call is baked\n"
+                 "once and then reused until the map is recentered or the draw's inputs change. Recentering rebakes every\n"
+                 "terrain draw call. Must stay below the first cascade level's half width, since the camera can sit this far\n"
+                 "from the center of the level that holds the most detail. 0 recenters whenever the camera moves.");
+      RTX_OPTION("rtx.terrainBaker.cascadeMap", bool, expandLastCascade, true,
                  "Expands the last cascade's footprint to cover the whole cascade map.\n"
                  "This ensures whole terrain surface has valid baked texture data to sample from\n"
                  "even if there isn't enough cascades generated (due to the current settings or limitations).");
@@ -184,6 +193,7 @@ namespace dxvk {
     };
     TextureRef* getConstantTexture(Rc<DxvkContext>& ctx, float value);
     void reportSurfaceOrientation(const DrawCallState& drawCallState);
+    void keepReplacementTexturesResident(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData& replacementMaterial);
     bool gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData* replacementMaterial, std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures);
     void updateMaterialData(Rc<RtxContext> ctx);
     void onFrameBegin(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
@@ -194,6 +204,13 @@ namespace dxvk {
     bool registerTerrainMesh(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState, const DrawCallState& drawCallState);
     void calculateTerrainBBOX(const uint32_t currentFrameIndex);
     void calculateBakingParameters(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
+    void updateCascadeCenter(const RtCamera& camera);
+    XXH64_hash_t calculateBakedLayoutHash() const;
+    void beginBakedContent(Rc<RtxContext> ctx);
+    static XXH64_hash_t calculateDrawKey(const DrawCallState& drawCallState, const OpaqueMaterialData* replacementMaterial,
+                                         const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
+                                         const D3D9SharedPS& sharedPS);
+    void accountDisplacement(const OpaqueMaterialData& replacementMaterial);
     void updateTextureFormat(const DxvkContextState& dxvkCtxState);
     void calculateCascadeMapResolution(const Rc<DxvkDevice>& device);
     const RtxMipmap::Resource& getTerrainTexture(Rc<DxvkContext> ctx, RtxTextureManager& textureManager, ReplacementMaterialTextureType::Enum textureType, uint32_t width, uint32_t height);
@@ -202,6 +219,25 @@ namespace dxvk {
     VkClearColorValue getClearColor(ReplacementMaterialTextureType::Enum textureType);
 
     BakingParameters m_bakingParams;
+
+    // The cascade map's center. It is held while the camera stays within recenterDistance of it,
+    // which is what keeps the baked texels valid from one frame to the next.
+    std::optional<Vector3> m_cascadeCenter;
+
+    // The cascade layout the baked texels were rendered for, and the draw calls already baked
+    // into it. A draw call whose key is in the set has nothing new to write and is not baked
+    // again. Both reset whenever the layout changes, which rebakes everything.
+    XXH64_hash_t m_bakedLayoutHash = kEmptyHash;
+    std::unordered_set<XXH64_hash_t> m_bakedDraws;
+
+    // A newly created terrain texture holds only its clear value, including where draw calls
+    // that were reused rather than baked this frame should have written. Forces a full rebake.
+    bool m_bakedContentLost = false;
+
+    uint32_t m_numDrawsBakedThisFrame = 0;
+    uint32_t m_numDrawsReusedThisFrame = 0;
+    uint32_t m_numDrawsBakedLastFrame = 0;
+    uint32_t m_numDrawsReusedLastFrame = 0;
 
     struct TextureKey {
       uint16_t width;

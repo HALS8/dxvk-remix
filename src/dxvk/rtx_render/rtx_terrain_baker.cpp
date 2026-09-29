@@ -155,7 +155,35 @@ namespace dxvk {
     }
   }
 
-  // Gathers available textures from a replacement material and 
+  // Keeps the replacement textures a draw call bakes from in video memory. Tracking must precede
+  // any check for a valid view, since a texture gets its views only once it is promoted. A draw
+  // call reusing its baked texels still tracks them: an untracked texture is demoted, and the new
+  // view would change the draw's key and force a rebake at lower detail.
+  void TerrainBaker::keepReplacementTexturesResident(Rc<RtxContext> ctx, const DrawCallState& drawCallState,
+                                                     OpaqueMaterialData& replacementMaterial) {
+    SceneManager& sceneManager = ctx->getSceneManager();
+    const bool hasTexcoords = drawCallState.hasTextureCoordinates();
+
+    auto track = [&](TextureRef& texture) {
+      if (texture.isValid()) {
+        uint32_t unusedTextureIndex;
+        sceneManager.trackTexture(texture, unusedTextureIndex, hasTexcoords);
+      }
+    };
+
+    track(replacementMaterial.getAlbedoOpacityTexture());
+
+    if (Material::bakeSecondaryPBRTextures()) {
+      track(replacementMaterial.getNormalTexture());
+      track(replacementMaterial.getTangentTexture());
+      track(replacementMaterial.getHeightTexture());
+      track(replacementMaterial.getRoughnessTexture());
+      track(replacementMaterial.getMetallicTexture());
+      track(replacementMaterial.getEmissiveColorTexture());
+    }
+  }
+
+  // Gathers available textures from a replacement material and
   // runs a compute shader to convert them into a compatible format for baking
   bool TerrainBaker::gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx,
                                                             const DrawCallState& drawCallState,
@@ -165,9 +193,7 @@ namespace dxvk {
       return false;
     }
 
-    SceneManager& sceneManager = ctx->getSceneManager();
     Resources& resourceManager = ctx->getResourceManager();
-    const bool hasTexcoords = drawCallState.hasTextureCoordinates();
     // We're going to use this to create a modified sampler for textures.
     DxvkSampler* pOriginalSampler = drawCallState.getMaterialData().getSampler().ptr();
     Rc<DxvkContext> dxvkCtx = ctx;
@@ -186,14 +212,7 @@ namespace dxvk {
                                     "Only single texture legacy materials are supported. Ignoring the second color texture.")));
     }
 
-    // Ensures a texture stays in VidMem
-    auto trackAndFinalizeTexture = [&](TextureRef& texture) {
-      uint32_t unusedTextureIndex;
-      sceneManager.trackTexture(texture, unusedTextureIndex, hasTexcoords);
-    };
-
-    // Track the source albedo opacity texture to keep it in VidMem as it's needed for baking
-    trackAndFinalizeTexture(replacementMaterial->getAlbedoOpacityTexture());
+    keepReplacementTexturesResident(ctx, drawCallState, *replacementMaterial);
 
     const DxvkImageCreateInfo& aoImageInfo = replacementMaterial->getAlbedoOpacityTexture().getImageView()->imageInfo();
 
@@ -212,22 +231,9 @@ namespace dxvk {
       return extent;
     };
 
-    auto addValidTexture = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType,
-                               bool isMaterialTexture = true) {
+    auto addValidTexture = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType) {
 
-      if (!texture.isValid()) {
-        return;
-      }
-
-      // Track the source material texture to keep it in VidMem while it's being used for baking.
-      // This needs to be done prior to checking for having valid views 
-      // since the views are not created until the texture is promoted.
-      // A constant's texture is owned by the baker and always resident, so it is not tracked.
-      if (isMaterialTexture) {
-        trackAndFinalizeTexture(texture);
-      }
-
-      if (!texture.getImageView()) {
+      if (!texture.isValid() || !texture.getImageView()) {
         return;
       }
 
@@ -243,8 +249,6 @@ namespace dxvk {
         conversionInfo.scale = prevFrameTotalHeight <= 0.f ? 0.f : materialTotalHeight / prevFrameTotalHeight;
         // We want to subtract the original neutral displacement, then scale the values, then add the new neutral displacement.
         conversionInfo.offset = -1.f * (materialTotalHeight == 0.f ? kDefaultNeutralHeight : (replacementMaterial->getDisplaceIn() / materialTotalHeight));
-        m_currFrameMaxDisplaceIn = std::max(m_currFrameMaxDisplaceIn, replacementMaterial->getDisplaceIn());
-        m_currFrameMaxDisplaceOut = std::max(m_currFrameMaxDisplaceOut, replacementMaterial->getDisplaceOut());
       }
 
       if (isPSReplacementSupportEnabled(drawCallState)) {
@@ -300,7 +304,7 @@ namespace dxvk {
         return;
       }
       if (TextureRef* constantTexture = getConstantTexture(dxvkCtx, constant)) {
-        addValidTexture(*constantTexture, textureType, false /* isMaterialTexture */);
+        addValidTexture(*constantTexture, textureType);
       }
     };
 
@@ -336,6 +340,68 @@ namespace dxvk {
     }
 
     return true;
+  }
+
+  // Every draw call that would bake a height map widens the displacement range the height cascade
+  // is normalized to, whether it bakes this frame or reuses what it baked earlier. Counting only
+  // the draws that bake would shrink the range as soon as they are reused, and the changed range
+  // would invalidate the cascade on the next frame.
+  void TerrainBaker::accountDisplacement(const OpaqueMaterialData& replacementMaterial) {
+    if (!Material::bakeSecondaryPBRTextures() ||
+        !replacementMaterial.getAlbedoOpacityTexture().isValid() ||
+        replacementMaterial.getHeightTexture().getImageView() == nullptr) {
+      return;
+    }
+    m_currFrameMaxDisplaceIn = std::max(m_currFrameMaxDisplaceIn, replacementMaterial.getDisplaceIn());
+    m_currFrameMaxDisplaceOut = std::max(m_currFrameMaxDisplaceOut, replacementMaterial.getDisplaceOut());
+  }
+
+  // Identifies everything a draw call writes into the cascade map, so that a draw call whose key
+  // was already baked into the current cascade layout can reuse those texels. Replacement textures
+  // are keyed by their current image view rather than their content: a streamed texture changes
+  // view when it gains mip levels, and the draw call should then bake again at the new detail.
+  XXH64_hash_t TerrainBaker::calculateDrawKey(const DrawCallState& drawCallState,
+                                              const OpaqueMaterialData* replacementMaterial,
+                                              const Matrix4& world,
+                                              const D3D9FixedFunctionVS* fixedFunctionVS,
+                                              const D3D9SharedPS& sharedPS) {
+    auto combine = [](XXH64_hash_t hash, const void* data, size_t size) {
+      return XXH64(data, size, hash);
+    };
+
+    XXH64_hash_t key = drawCallState.getGeometryData().getHashForRule<rules::FullGeometryHash>();
+    key = combine(key, &world, sizeof(world));
+
+    const XXH64_hash_t legacyMaterial = drawCallState.getMaterialData().computeIdentityHash();
+    key = combine(key, &legacyMaterial, sizeof(legacyMaterial));
+
+    if (fixedFunctionVS != nullptr) {
+      key = combine(key, &fixedFunctionVS->Material, sizeof(fixedFunctionVS->Material));
+      key = combine(key, fixedFunctionVS->TexcoordMatrices.data(), sizeof(fixedFunctionVS->TexcoordMatrices));
+    }
+
+    for (const D3D9SharedPS::Stage& stage : sharedPS.Stages) {
+      key = combine(key, stage.Constant, sizeof(stage.Constant));
+      key = combine(key, stage.BumpEnvMat, sizeof(stage.BumpEnvMat));
+      key = combine(key, &stage.BumpEnvLScale, sizeof(stage.BumpEnvLScale));
+      key = combine(key, &stage.BumpEnvLOffset, sizeof(stage.BumpEnvLOffset));
+    }
+
+    if (replacementMaterial != nullptr) {
+      const TextureRef* textures[] = {
+        &replacementMaterial->getAlbedoOpacityTexture(), &replacementMaterial->getNormalTexture(),
+        &replacementMaterial->getTangentTexture(), &replacementMaterial->getHeightTexture(),
+        &replacementMaterial->getRoughnessTexture(), &replacementMaterial->getMetallicTexture(),
+        &replacementMaterial->getEmissiveColorTexture() };
+      for (const TextureRef* texture : textures) {
+        const DxvkImageView* view = texture->getImageView();
+        key = combine(key, &view, sizeof(view));
+      }
+      const float constants[] = { replacementMaterial->getRoughnessConstant(), replacementMaterial->getMetallicConstant() };
+      key = combine(key, constants, sizeof(constants));
+    }
+
+    return key;
   }
 
   void TerrainBaker::reportSurfaceOrientation(const DrawCallState& drawCallState) {
@@ -444,8 +510,6 @@ namespace dxvk {
                                   OpaqueMaterialData* replacementMaterial,
                                   Matrix4& textureTransformOut) {
 
-    ScopedGpuProfileZone(ctx, "Terrain Baker: Bake Draw Call");
-
     SceneManager& sceneManager = ctx->getSceneManager();
     Resources& resourceManager = ctx->getResourceManager();
     RtxTextureManager& textureManger = ctx->getCommonObjects()->getTextureManager();
@@ -525,6 +589,27 @@ namespace dxvk {
       prevCB.fixedFunction = *static_cast<D3D9FixedFunctionVS*>(rtState.vsFixedFunctionCB->mapPtr(0));
     }
     D3D9SharedPS prevSharedState = *static_cast<D3D9SharedPS*>(rtState.psSharedStateCB->mapPtr(0));
+
+    if (replacementMaterial != nullptr) {
+      accountDisplacement(*replacementMaterial);
+    }
+
+    const Matrix4& world = drawCallState.usesVertexShader ? prevCB.programmablePipeline.normalTransform : prevCB.fixedFunction.World;
+    const XXH64_hash_t drawKey = calculateDrawKey(drawCallState, replacementMaterial, world,
+                                                  drawCallState.usesVertexShader ? nullptr : &prevCB.fixedFunction,
+                                                  prevSharedState);
+
+    // Already in the cascade map: the texels this draw call would write are there from an earlier frame.
+    if (m_bakedDraws.count(drawKey) != 0) {
+      if (replacementMaterial != nullptr) {
+        keepReplacementTexturesResident(ctx, drawCallState, *replacementMaterial);
+      }
+      ++m_numDrawsReusedThisFrame;
+      updateMaterialData(ctx);
+      return true;
+    }
+
+    ScopedGpuProfileZone(ctx, "Terrain Baker: Bake Draw Call");
 
     const float2 float2CascadeLevelResolution = float2 {
       static_cast<float>(m_bakingParams.cascadeLevelResolution.width),
@@ -684,7 +769,6 @@ namespace dxvk {
         m_materialTextures[textureType].markAsBaked();
       }
 
-      const Matrix4& world = drawCallState.usesVertexShader ? prevCB.programmablePipeline.normalTransform : prevCB.fixedFunction.World;
       Matrix4 worldSceneView = m_bakingParams.sceneView * world;
 
       // Render into all cascade levels. 
@@ -789,6 +873,11 @@ namespace dxvk {
       }
 
       // Input color texture will be restored in RtxContext::bakeTerrain
+    }
+
+    if (bakingResult) {
+      m_bakedDraws.insert(drawKey);
+      ++m_numDrawsBakedThisFrame;
     }
 
     updateMaterialData(ctx);
@@ -904,6 +993,7 @@ namespace dxvk {
         ctx, "baked terrain texture", resolution, getTextureFormat(textureType), VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, getClearColor(textureType), getMipLevels(textureType, resolution));
 
       m_needsMaterialDataUpdate = true;
+      m_bakedContentLost = true;
       // Cascade image just appeared or changed size, so the cascade set the
       // override OpaqueMaterialData describes is different from any prior frame.
       // SceneManager reads this to keep terrain draws on the dynamic path for
@@ -1001,6 +1091,7 @@ namespace dxvk {
         RemixGui::DragInt("Max Cascade Levels", &cascadeMap.maxLevelsObject(), 1.f, 1, 16);
         RemixGui::DragInt("Texture Resolution Per Cascade Level", &cascadeMap.levelResolutionObject(), 8.f, 1, 32 * 1024);
         RemixGui::Checkbox("Expand Last Cascade Level", &cascadeMap.expandLastCascadeObject());
+        RemixGui::DragFloat("Recenter Distance [meters]", &cascadeMap.recenterDistanceObject(), 0.1f, 0.f, 10000.f, "%.1f", sliderFlags);
 
         if (RemixGui::CollapsingHeader("Statistics")) {
           ImGui::Indent();
@@ -1008,6 +1099,7 @@ namespace dxvk {
           ImGui::Text("Cascade Levels: %u", m_bakingParams.numCascades);
           ImGui::Text("Cascade Level Resolution: %u, %u", m_bakingParams.cascadeLevelResolution.width, m_bakingParams.cascadeLevelResolution.height);
           ImGui::Text("Cascade Map Resolution: %u, %u", m_bakingParams.cascadeMapResolution.width, m_bakingParams.cascadeMapResolution.height);
+          ImGui::Text("Draw Calls Baked / Reused Last Frame: %u / %u", m_numDrawsBakedLastFrame, m_numDrawsReusedLastFrame);
         
           ImGui::Unindent();
         }
@@ -1045,6 +1137,11 @@ namespace dxvk {
     m_hasInitializedMaterialDataThisFrame = false;
     m_cascadeCompositionChangedThisFrame = false;
 
+    m_numDrawsBakedLastFrame = m_numDrawsBakedThisFrame;
+    m_numDrawsReusedLastFrame = m_numDrawsReusedThisFrame;
+    m_numDrawsBakedThisFrame = 0;
+    m_numDrawsReusedThisFrame = 0;
+
     for (BakedTexture& texture : m_materialTextures) {
       texture.onFrameEnd(ctx);
     }
@@ -1071,8 +1168,8 @@ namespace dxvk {
 
   void TerrainBaker::prepareSceneData(Rc<RtxContext> ctx) {
     if (TerrainBaker::needsTerrainBaking()) {
-      // update the height mipmap
-      if (m_materialTextures[ReplacementMaterialTextureType::Height].texture.isValid()) {
+      // The mip chain only changes when texels do, i.e. on frames that baked something
+      if (m_numDrawsBakedThisFrame > 0 && m_materialTextures[ReplacementMaterialTextureType::Height].texture.isValid()) {
         ScopedGpuProfileZone(ctx, "Terrain Height Mip Map");
         RtxMipmap::updateMipmap(ctx, m_materialTextures[ReplacementMaterialTextureType::Height].texture, MipmapMethod::Maximum);
       }
@@ -1162,14 +1259,70 @@ namespace dxvk {
 
     updateTextureFormat(dxvkCtxState);
     calculateBakingParameters(ctx, dxvkCtxState);
+    beginBakedContent(ctx);
+  }
 
-    // Clear terrain textures
+  // Everything that decides where a world position lands in the cascade map, and what a baked
+  // height value means. Texels baked under one layout are meaningless under another.
+  XXH64_hash_t TerrainBaker::calculateBakedLayoutHash() const {
+    auto combine = [](XXH64_hash_t hash, const void* data, size_t size) {
+      return XXH64(data, size, hash);
+    };
+
+    XXH64_hash_t hash = XXH64(&m_bakingParams.sceneView, sizeof(m_bakingParams.sceneView), 0);
+    hash = combine(hash, m_bakingParams.bakingCameraOrthoProjection.data(),
+                   m_bakingParams.bakingCameraOrthoProjection.size() * sizeof(Matrix4));
+    hash = combine(hash, &m_bakingParams.cascadeMapResolution, sizeof(m_bakingParams.cascadeMapResolution));
+    hash = combine(hash, &m_bakingParams.cascadeLevelResolution, sizeof(m_bakingParams.cascadeLevelResolution));
+
+    const float displacement[] = { m_prevFrameMaxDisplaceIn, m_prevFrameMaxDisplaceOut, Material::Properties::displaceInFactor() };
+    hash = combine(hash, displacement, sizeof(displacement));
+
+    const bool materialOptions[] = {
+      Material::bakeReplacementMaterials(), Material::bakeSecondaryPBRTextures(), Material::bakeMaterialConstants(),
+      Material::replacementSupportInPS() };
+    hash = combine(hash, materialOptions, sizeof(materialOptions));
+
+    return hash;
+  }
+
+  // Starts the frame's baking: either from scratch, when the layout changed or the textures lost
+  // their contents, or on top of what earlier frames baked.
+  void TerrainBaker::beginBakedContent(Rc<RtxContext> ctx) {
+    const XXH64_hash_t layoutHash = calculateBakedLayoutHash();
+    const bool texturesLost =
+      m_bakedContentLost || !m_materialTextures[ReplacementMaterialTextureType::AlbedoOpacity].texture.isValid();
+
+    if (layoutHash == m_bakedLayoutHash && !texturesLost) {
+      // Draw calls reusing their texels do not rebake, so they would not mark the textures they
+      // wrote to as baked. Every texture holding valid texels stays bound instead.
+      for (BakedTexture& texture : m_materialTextures) {
+        if (texture.texture.isValid()) {
+          texture.markAsBaked();
+        }
+      }
+      return;
+    }
+
+    m_bakedLayoutHash = layoutHash;
+    m_bakedDraws.clear();
+    m_bakedContentLost = false;
+
     if (clearTerrainBeforeBaking() && !debugDisableBaking()) {
       for (uint32_t i = 0; i < ReplacementMaterialTextureType::Count; i++) {
         if (m_materialTextures[i].texture.isValid()) {
           clearMaterialTexture(ctx, static_cast<ReplacementMaterialTextureType::Enum>(i));
         }
       }
+    }
+  }
+
+  void TerrainBaker::updateCascadeCenter(const RtCamera& camera) {
+    const Vector3& position = camera.getPosition();
+    const float recenterDistance = RtxOptions::getMeterToWorldUnitScale() * cascadeMap.recenterDistance();
+
+    if (!m_cascadeCenter.has_value() || length(position - *m_cascadeCenter) > recenterDistance) {
+      m_cascadeCenter = position;
     }
   }
 
@@ -1238,6 +1391,9 @@ namespace dxvk {
 
     m_bakingParams.frameIndex = currentFrameIndex;
 
+    updateCascadeCenter(camera);
+    const Vector3& cascadeCenter = *m_cascadeCenter;
+
     const bool terrainBBOXIsValid = m_bakedTerrainBBOX.isValid();
     const float epsilon = 0.01f;      // Epsilon to ensure distances are greater or equal
 
@@ -1248,8 +1404,8 @@ namespace dxvk {
 
     const float cameraRelativeTerrainHeight =
       terrainBBOXIsValid
-      ? SceneManager::worldToSceneOrientedVector(m_bakedTerrainBBOX.maxPos - camera.getPosition()).z
-      : metersToWorldUnitScale * cascadeMap.defaultHeight() / 2; // Assume camera is in the middle of terrain's height span
+      ? SceneManager::worldToSceneOrientedVector(m_bakedTerrainBBOX.maxPos - cascadeCenter).z
+      : metersToWorldUnitScale * cascadeMap.defaultHeight() / 2; // Assume the center is in the middle of terrain's height span
 
     // Constants set to what makes generally should make sense
     // Offset zFar by zNear to match the baking camera position being offset by it.
@@ -1263,10 +1419,10 @@ namespace dxvk {
       // Add offset for all terrain samples to be within the baked terrain texture
       const float halfTexelOffset = 10;       // ToDo: calculate an exact value
 
-      // Compute bbox relative to the camera
+      // Compute bbox relative to the cascade center
       AxisAlignedBoundingBox cameraRelativeTerrainBBOX = {
-        m_bakedTerrainBBOX.minPos - camera.getPosition() - Vector3{ halfTexelOffset },
-        m_bakedTerrainBBOX.maxPos - camera.getPosition() + Vector3{ halfTexelOffset }
+        m_bakedTerrainBBOX.minPos - cascadeCenter - Vector3{ halfTexelOffset },
+        m_bakedTerrainBBOX.maxPos - cascadeCenter + Vector3{ halfTexelOffset }
       };
 
       // Convert the bbox to scene space
@@ -1290,8 +1446,8 @@ namespace dxvk {
       // Offset by zNear so that zNear doesn't clip the terrain
       // Offset by epsilon so that it doesn't clip top of the terrain
       const Vector3 bakingCameraPosition = cameraRelativeTerrainHeight >= 0.f
-        ? camera.getPosition() + (cameraRelativeTerrainHeight * (1 + epsilon) + zNear) * up
-        : camera.getPosition() + (cameraRelativeTerrainHeight * (1 - epsilon) - zNear) * up;
+        ? cascadeCenter + (cameraRelativeTerrainHeight * (1 + epsilon) + zNear) * up
+        : cascadeCenter + (cameraRelativeTerrainHeight * (1 - epsilon) - zNear) * up;
 
       const Vector3 translation = Vector3(
         dot(right, -bakingCameraPosition),
