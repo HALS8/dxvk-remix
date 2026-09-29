@@ -60,7 +60,13 @@ struct TerrainArgs {
   uint maxCascadeLevel;
   float lastCascadeScale;
   float displaceIn;
-  uint pad0;
+  // How far the camera may be from the cascade map's centre, in the first cascade's texture
+  // space. A level is chosen by distance from the camera plus this margin, which keeps the level
+  // boundaries moving with the camera while still guaranteeing the level covers the sample.
+  float recenterMargin;
+
+  float2 cameraOffsetFromCenter;  // The camera's position in the first cascade's texture space, relative to its centre
+  uint2 pad0;
 };
 
 struct NeeCacheArgs {

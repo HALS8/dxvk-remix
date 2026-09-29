@@ -593,8 +593,12 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
         // viewDirection is hitPos to camera, so invert it before converting to a texcoord offset.
         const vec2 maxPossiblePomOffset = viewDirTangentSpace.xy * (-1.f * cb.terrainArgs.displaceIn / viewDirTangentSpace.z);
 
+        // The level is chosen by distance from the camera rather than from the map's centre, which is
+        // held in place while the camera moves within the recenter distance: measured from the centre,
+        // every level boundary would jump when the map recentres. The camera is never further than the
+        // margin from the centre, so a level covering the distance plus the margin covers the sample.
         const vec2 textureCenterOffset = texcoordToOffsetFromTextureCenter(surfaceInteraction.textureCoordinates + maxPossiblePomOffset);
-        const float maxTextureCenterOffset = length(textureCenterOffset);
+        const float maxTextureCenterOffset = length(textureCenterOffset - cb.terrainArgs.cameraOffsetFromCenter) + cb.terrainArgs.recenterMargin;
 
         // Calculate a cascade level if sampling outside the first cascade
         if (maxTextureCenterOffset >= 0.5)

@@ -4701,3 +4701,11 @@ found it changed since their previous frame.
   `noteVertexShaderConstants`, `logVertexShaderConstantChanges`.*
 - **src/d3d9/d3d9_rtx.cpp** - inline tweak (+4 LOC). *Frame-end call of the diagnostic.*
 
+
+**Level selection follows the camera (2026-09-29).** With the centre held, choosing a level by
+distance from the centre made every level boundary jump by up to `recenterDistance` whenever the map
+recentred - visible as ground detail popping in a ring. The level is now chosen by distance from the
+camera plus `recenterDistance` as a margin: the camera is never further than that from the centre, so
+the chosen level still covers the sample, and its boundaries move continuously with the camera as
+they did before. `TerrainArgs` gains `recenterMargin` and `cameraOffsetFromCenter` (raytrace_args.h,
++6 LOC; surface_interaction.slangh, +6 / -2 LOC; `getTerrainArgs`, +5 LOC).

@@ -1033,6 +1033,11 @@ namespace dxvk {
     }
     args.lastCascadeScale = m_bakingParams.lastCascadeScale;
 
+    // Both in the first cascade's texture space, where the level spans <0, 1> across twice its half width
+    args.recenterMargin = cascadeMap.recenterDistance() / (2.f * cascadeMap.levelHalfWidth());
+    const Vector4 cameraTexcoord = m_bakingParams.viewToCascade0TextureSpace * Vector4(0.f, 0.f, 0.f, 1.f);
+    args.cameraOffsetFromCenter = float2 { cameraTexcoord.x - 0.5f, cameraTexcoord.y - 0.5f };
+
     return args;
   }
 
