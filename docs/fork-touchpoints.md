@@ -4595,3 +4595,26 @@ documented. Upstream bug, not reported upstream.
   orders tied layers by suffix so the last file is strongest.*
 - **src/dxvk/rtx_render/rtx_option_layer.h** - inline tweak (1 comment line). *Example layer names
   in the `createLayersFromEnvVar` declaration.*
+
+---
+
+## Workstream - Full mips for textures read outside sampler feedback (local - 2026-09-29)
+
+Sampler feedback only reports reads made by ray-traced materials. Some consumers read a streamed
+texture where feedback cannot see it: the terrain baker samples a replacement material's textures
+in its bake pass, and the API dome light samples its texture directly. Before upstream's
+refcount refactor (REMIX-5779) such a texture never took part in feedback-driven streaming and was
+kept at full mips while recently used. Since the refactor every texture carries a feedback stamp
+from creation, so every in-scene texture takes its mip count from feedback, and a texture only the
+baker reads is held at its smallest mips: baked terrain comes out blurry. The non-feedback branch
+("sky, terrain, etc.") is unreachable for them.
+
+Those consumers already call `addTexture` without an associated feedback stamp. That call now
+records the frame, and a texture with such a use within `numFramesToKeepMaterialTextures` stays off
+the feedback priority list and is requested at full mips. Upstream bug, not reported upstream.
+
+- **src/dxvk/rtx_render/rtx_texture.h** - inline tweak (1 field). *`ManagedTexture::
+  m_frameLastUsedOutsideSamplerFeedback`.*
+- **src/dxvk/rtx_render/rtx_texture_manager.cpp** - inline tweak (+11 / -3 LOC).
+  *`isUsedOutsideSamplerFeedback`; `addTexture` stamps the frame for a stamp-less use;
+  `garbageCollection` keeps such textures off the priority list and at full mips.*

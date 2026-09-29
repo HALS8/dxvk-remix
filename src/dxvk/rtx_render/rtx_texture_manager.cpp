@@ -144,6 +144,13 @@ namespace dxvk {
       return resultSize;
     }
 
+    // Sampler feedback only sees reads made by the ray-traced materials, so a texture that a consumer outside it
+    // still reads (terrain baker, dome light) must not have its mips chosen from that feedback.
+    bool isUsedOutsideSamplerFeedback(const ManagedTexture& texture, uint32_t curframe) {
+      return texture.m_frameLastUsedOutsideSamplerFeedback != UINT32_MAX
+          && curframe - texture.m_frameLastUsedOutsideSamplerFeedback <= RtxOptions::numFramesToKeepMaterialTextures();
+    }
+
     size_t calcSizeForAssetCached(ManagedTexture& texture, uint32_t begin, uint32_t end) {
       const AssetData& asset = *texture.m_assetData;
       const AssetInfo& info = asset.info();
@@ -1022,6 +1029,9 @@ namespace dxvk {
       scheduleTextureLoad(tex, false);
       return;
     }
+    if (associatedFeedbackStamp == SAMPLER_FEEDBACK_INVALID) {
+      tex->m_frameLastUsedOutsideSamplerFeedback = m_device->getCurrentFrameId();
+    }
     updateSamplerFeedback(tex, associatedFeedbackStamp);
   }
 
@@ -1398,7 +1408,7 @@ namespace dxvk {
       for (const auto& tex : m_sf.m_idToTexture) {
         assert(tex != nullptr);
         if (tex != nullptr && tex->m_canDemote) {
-          if (tex->m_refCount > 0 && tex->m_samplerFeedbackStamp != SAMPLER_FEEDBACK_INVALID) {
+          if (tex->m_refCount > 0 && tex->m_samplerFeedbackStamp != SAMPLER_FEEDBACK_INVALID && !isUsedOutsideSamplerFeedback(*tex, curframe)) {
             // for low memory GPUs we should do our best to not blow through all memory, lower the highest quality mip level
             // need to account for textures that dont have more than 1 mip level here too.
             const uint32_t allmipcount = tex->m_assetData->info().mipLevels - ((RtxOptions::lowMemoryGpu() && tex->m_assetData->info().mipLevels > 0) ? 1u : 0u);
@@ -1418,11 +1428,11 @@ namespace dxvk {
     }
 
 
-    // Non-SF textures (sky, terrain, etc.): keep at full mips while active in the scene,
-    // evict once the scene clears (m_refCount > 0 reset in clear()).
+    // Non-SF textures (sky, terrain, etc.): keep at full mips while active in the scene or while a consumer
+    // sampler feedback cannot see still reads them, evict once the scene clears (m_refCount > 0 reset in clear()).
     for (ManagedTexture* tex : checkonlyframes) {
       assert(tex && tex->m_canDemote);
-      tex->requestMips(tex->m_refCount > 0 ? MAX_MIPS : 0);
+      tex->requestMips(tex->m_refCount > 0 || isUsedOutsideSamplerFeedback(*tex, curframe) ? MAX_MIPS : 0);
       scheduleTextureLoad(tex, true);
     }
 

@@ -91,6 +91,9 @@ namespace dxvk {
     uint16_t            m_samplerFeedbackStamp = 0; // unique linear index of this asset; required to keep
                                                     // the data structure access simple (i.e. with a linear index, it's just an offset in array)
     int32_t             m_refCount = 0;  // number of live RtInstances whose bound surface material references this texture; negative values indicate a retain/release bug
+    // Fork: last frame a consumer that sampler feedback cannot see (terrain baker, dome light) used this
+    // texture. Feedback never reports those reads, so the texture is kept at full mips while this is recent.
+    uint32_t            m_frameLastUsedOutsideSamplerFeedback = UINT32_MAX;
 
   public:
     bool hasUploadedMips(uint32_t requiredMips, bool exact) const;
