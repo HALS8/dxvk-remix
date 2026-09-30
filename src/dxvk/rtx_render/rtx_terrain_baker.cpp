@@ -759,8 +759,22 @@ namespace dxvk {
     uint32_t colorTextureSlot = kInvalidResourceSlot;
     uint32_t secondaryTextureSlot = kInvalidResourceSlot;
 
+    // The game's sampler for the slot may not filter across mips, which its own textures never needed.
+    // A replacement map tiles far more densely than the cascade texels it is baked into, and sampled at
+    // one mip it aliases into per-texel noise -- plainly visible in normal maps, hidden in low-contrast
+    // albedo. Replacement textures are baked through a sampler that filters mips, with the game's
+    // address modes kept since the layers tile.
+    Rc<DxvkSampler> prevColorSlotSampler;
     if (bakeReplacementTextures) {
       colorTextureSlot = drawCallState.getMaterialData().getColorTextureSlot(0);
+
+      prevColorSlotSampler = ctx->getShaderResourceSlot(colorTextureSlot).sampler;
+      if (prevColorSlotSampler.ptr()) {
+        const DxvkSamplerCreateInfo& info = prevColorSlotSampler->info();
+        ctx->bindResourceSampler(colorTextureSlot, ctx->getResourceManager().getSampler(
+          VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, info.addressModeU, info.addressModeV, info.addressModeW,
+          info.borderColor, 0.f, true));
+      }
 
       // Check that the slot for secondary textures is available
       const uint32_t textureSlot = drawCallState.getMaterialData().getColorTextureSlot(kTerrainBakerSecondaryTextureStage);
@@ -1014,6 +1028,10 @@ namespace dxvk {
         ctx->allocAndMapVertexCaptureConstantBuffer() = prevCB.programmablePipeline;
       } else {
         ctx->allocAndMapFixedFunctionVSConstantBuffer() = prevCB.fixedFunction;
+      }
+
+      if (prevColorSlotSampler.ptr()) {
+        ctx->bindResourceSampler(colorTextureSlot, prevColorSlotSampler);
       }
 
       if (secondaryTextureSlot != kInvalidResourceSlot) {
