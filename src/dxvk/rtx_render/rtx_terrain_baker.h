@@ -27,12 +27,22 @@
 #include "rtx_mipmap.h"
 #include "../util/util_struct_hash.h"
 
+#include <unordered_map>
 #include <unordered_set>
 
 namespace dxvk {
 
   struct D3D9FixedFunctionVS;
   struct D3D9SharedPS;
+
+  // Which faces a side projection view keeps. The view only holds surfaces facing it, so the
+  // floor under a ceiling, or the far side of a ridge, cannot hide the surface a hit samples.
+  // Which winding counts as facing depends on the game's convention, hence the choice.
+  enum class TerrainSideProjectionCulling : uint32_t {
+    None = 0,
+    Back,
+    Front
+  };
 
   class TerrainBaker {
   public:
@@ -167,6 +177,24 @@ namespace dxvk {
                  "once and then reused until the map is recentered or the draw's inputs change. Recentering rebakes every\n"
                  "terrain draw call. Must stay below the first cascade level's half width, since the camera can sit this far\n"
                  "from the center of the level that holds the most detail. 0 recenters whenever the camera moves.");
+      RTX_OPTION_ARGS("rtx.terrainBaker.cascadeMap", uint32_t, sideProjectionLevels, 0,
+                      "Number of cascade levels that are also baked from the four horizontal directions and from below.\n"
+                      "The cascade map is a top-down projection, so a near-vertical face gets one column of texels smeared\n"
+                      "down its height, and a surface with another above it (a floor under a ceiling) shares its texels\n"
+                      "with it. Side projections hold those surfaces at their own resolution, and each ray hit picks the\n"
+                      "projection its surface faces most. A projection is only used where it saw the hit surface itself,\n"
+                      "checked against its depth, so an occluded surface falls back to the top-down projection.\n"
+                      "The projections are baked at half the level resolution, only for draw calls that have faces\n"
+                      "steep enough to need them, and only created once such a draw call is seen. 0 disables them.",
+                      args.minValue = 0,
+                      args.maxValue = kMaxTerrainSideProjectionLevels);
+      RTX_OPTION("rtx.terrainBaker.cascadeMap", TerrainSideProjectionCulling, sideProjectionCulling, TerrainSideProjectionCulling::Back,
+                 "Faces a side projection culls, in terms of the terrain draw call's own front face. Back keeps the\n"
+                 "surfaces facing each projection. Switch to Front if the Terrain Cascade Map debug view shows the side\n"
+                 "projections holding the faces turned away from them instead.");
+      RTX_OPTION("rtx.terrainBaker.cascadeMap", float, sideProjectionDepthTolerance, 0.05f,
+                 "How far a hit may be from the surface a side projection baked at its texel and still sample it [meters].\n"
+                 "Added to an allowance for the surface's slope across the texel.");
       RTX_OPTION("rtx.terrainBaker.cascadeMap", bool, expandLastCascade, true,
                  "Expands the last cascade's footprint to cover the whole cascade map.\n"
                  "This ensures whole terrain surface has valid baked texture data to sample from\n"
@@ -178,13 +206,20 @@ namespace dxvk {
   private:
     struct BakingParameters {
       uint32_t numCascades;
+      uint32_t numSideProjectionLevels;
+      // Side projection views are packed four to a tile, in the first tiles of the map, so that
+      // the depth buffer they are baked with only needs to cover the map's first row.
+      uint32_t numSideProjectionTiles;
       uint2 cascadeMapSize;
       VkExtent2D cascadeLevelResolution;
       VkExtent2D cascadeMapResolution;
 
       Matrix4 sceneView;  // View matrix for a camera looking along scene's forward axis
-      Matrix4 inverseSceneView;
       std::vector<Matrix4> bakingCameraOrthoProjection;  // Ortho projections to bake for all cascades
+      // Every side projection view, indexed by level * kNumTerrainSideProjectionViews + view
+      std::vector<Matrix4> sideProjectionView;
+      std::vector<Matrix4> sideProjectionOrthoProjection;
+      Vector3 sideProjectionViewDirection[kNumTerrainSideProjectionViews];  // Towards each view's camera
       Matrix4 viewToCascade0TextureSpace; // Matrix transforming viwe coordinates to 1st cascade texture space
       float zNear;
       float zFar;
@@ -211,6 +246,22 @@ namespace dxvk {
                                          const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
                                          const D3D9SharedPS& sharedPS);
     void accountDisplacement(const OpaqueMaterialData& replacementMaterial);
+
+    // Triangle counts of a terrain geometry by which projection represents them best. Upward and
+    // downward follow the geometry's winding, whose sense is only known across all terrain.
+    struct SurfaceOrientation {
+      uint32_t upward = 0;
+      uint32_t downward = 0;
+      uint32_t steep = 0;
+    };
+    const SurfaceOrientation& getSurfaceOrientation(const DrawCallState& drawCallState);
+    bool needsHorizontalSideProjections(const SurfaceOrientation& orientation) const;
+    bool needsSideProjectionFromBelow(const SurfaceOrientation& orientation) const;
+    void calculateSideProjectionParameters(const Vector3& cascadeCenter, float zNear);
+    VkRect2D getTopDownViewRect(uint32_t level) const;
+    VkRect2D getSideProjectionViewRect(uint32_t sideView) const;
+    void updateSideProjectionDepth(Rc<DxvkContext> ctx);
+    void releaseSideProjectionDepth(RtxTextureManager& textureManager);
     void updateTextureFormat(const DxvkContextState& dxvkCtxState);
     void calculateCascadeMapResolution(const Rc<DxvkDevice>& device);
     const RtxMipmap::Resource& getTerrainTexture(Rc<DxvkContext> ctx, RtxTextureManager& textureManager, ReplacementMaterialTextureType::Enum textureType, uint32_t width, uint32_t height);
@@ -233,6 +284,20 @@ namespace dxvk {
     // A newly created terrain texture holds only its clear value, including where draw calls
     // that were reused rather than baked this frame should have written. Forces a full rebake.
     bool m_bakedContentLost = false;
+
+    // Latched once a baked draw call has faces the top-down projection cannot represent. The side
+    // projections cost memory and baking time, so a scene without such faces never creates them.
+    bool m_sideProjectionsNeeded = false;
+    std::unordered_map<XXH64_hash_t, SurfaceOrientation> m_surfaceOrientations;
+    // Upward minus downward triangles over all terrain seen. Terrain faces up far more than down, so
+    // its sign says which winding faces up.
+    int64_t m_upwardTriangleBalance = 0;
+
+    // Depth the side projections are baked with, and read back from to tell whether a hit is the
+    // surface a projection holds at that texel. Covers the map's first row of tiles only.
+    Resources::Resource m_sideProjectionDepth;
+    Rc<DxvkImageView> m_sideProjectionDepthTarget;
+    uint32_t m_sideProjectionDepthTextureIndex = kSurfaceMaterialInvalidTextureIndex;
 
     uint32_t m_numDrawsBakedThisFrame = 0;
     uint32_t m_numDrawsReusedThisFrame = 0;

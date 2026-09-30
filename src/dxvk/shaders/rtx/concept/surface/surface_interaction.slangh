@@ -146,9 +146,10 @@ float cascadeTransitionNoise(vec3 position, uint frameIdx)
 // where cascades are stored as tiles left to right, top to bottom
 void convert1stCascadeTexCoordsToTargetCascadeLevel(uint targetCascadeLevel, inout vec2 interpolatedTexcoord, inout vec2 texcoords[3])
 {
+  const uint tile = cb.terrainArgs.firstLevelTile + targetCascadeLevel;
   ivec2 cascade2DIndex;
-  cascade2DIndex.y = targetCascadeLevel * cb.terrainArgs.rcpCascadeMapSize.x;
-  cascade2DIndex.x = targetCascadeLevel - cascade2DIndex.y * cb.terrainArgs.cascadeMapSize.x;
+  cascade2DIndex.y = tile / cb.terrainArgs.cascadeMapSize.x;
+  cascade2DIndex.x = tile - cascade2DIndex.y * cb.terrainArgs.cascadeMapSize.x;
 
   const float baseCascadeScale = targetCascadeLevel == cb.terrainArgs.maxCascadeLevel ? cb.terrainArgs.lastCascadeScale : 1.f;
   const float rcpTargetCascadeLevelScale = 1 / (baseCascadeScale * pow(2, targetCascadeLevel));
@@ -160,6 +161,132 @@ void convert1stCascadeTexCoordsToTargetCascadeLevel(uint targetCascadeLevel, ino
   {
     texcoords[i] = convert1stCascadeTexCoordToTiledTexCoord(cascade2DIndex, rcpTargetCascadeLevelScale, texcoords[i]);
   }
+}
+
+// Converts from <0, 1> texture space of a side projection view into the combined tiled texture space.
+// Side projection views are stored four to a tile, in the first row of tiles, in level-major order.
+vec2 convertSideProjectionTexCoordToTiledTexCoord(uint sideView, vec2 texcoord)
+{
+  const uint tile = sideView / 4;
+  const uint quarter = sideView % 4;
+  const vec2 quarterIndex = vec2(tile * 2 + (quarter % 2), quarter / 2);
+  return 0.5 * cb.terrainArgs.rcpCascadeMapSize * (quarterIndex + texcoord);
+}
+
+// Picks the terrain projection a surface faces the most: the top-down cascade map, one of the four
+// horizontal side projections or the one from below. Near a tie between the two best, the choice is
+// dithered so that the seam between projections blends instead of showing as a line.
+// Returns kNumTerrainSideProjectionViews for the top-down cascade map.
+uint selectTerrainProjection(vec3 facingNormal, float noise)
+{
+  const float kTransitionBand = 0.15;  // in cosine units
+
+  uint best = kNumTerrainSideProjectionViews;
+  float bestScore = dot(facingNormal, cb.terrainArgs.sceneUp);
+  uint second = best;
+  float secondScore = -2.0;
+
+  for (uint view = 0; view < kNumTerrainSideProjectionViews; view++)
+  {
+    const float score = dot(facingNormal, cb.terrainArgs.sideProjectionViewDirection[view].xyz);
+    if (score > bestScore)
+    {
+      second = best;
+      secondScore = bestScore;
+      best = view;
+      bestScore = score;
+    }
+    else if (score > secondScore)
+    {
+      second = view;
+      secondScore = score;
+    }
+  }
+
+  const float margin = bestScore - secondScore;
+  return margin < kTransitionBand && noise < 0.5 * (1.0 - margin / kTransitionBand) ? second : best;
+}
+
+// Replaces a baked terrain surface's top-down texcoords with a side projection's when the surface
+// faces a side projection more than the top-down one, lies within the side projected levels, and is
+// the surface that projection holds at its texel. Returns false, leaving the texcoords untouched,
+// whenever the top-down cascade map has to be used instead.
+bool applyTerrainSideProjection(
+  vec3 position, vec3 facingNormal, vec3 worldPositions[3], uint frameIdx,
+  inout vec2 interpolatedTexcoord, inout vec2 texcoords[3])
+{
+  if (cb.terrainArgs.numSideProjectionLevels == 0)
+  {
+    return false;
+  }
+
+  const float noise = cascadeTransitionNoise(position, frameIdx);
+  const uint view = selectTerrainProjection(facingNormal, noise);
+  if (view == kNumTerrainSideProjectionViews)
+  {
+    return false;
+  }
+
+  // A level's views cover a cube around the map's centre, and the camera may be up to the recenter
+  // distance from it, so a level covering the distance from the camera plus that margin holds the sample.
+  const vec3 cameraOffset = abs(position - cameraGetWorldPosition(cb.camera));
+  const float extent = max(max(cameraOffset.x, cameraOffset.y), cameraOffset.z) + cb.terrainArgs.recenterDistance;
+  const float logExtent = log2(max(extent / cb.terrainArgs.sideProjectionLevelHalfWidth, 1e-6));
+  uint level = uint(max(ceil(logExtent), 0.0));
+
+  // Dithered like the top-down levels, including the step past the last level to the top-down map
+  const float kLevelTransitionBand = 0.25;  // in log2 units of the level's extent
+  const float distanceToBoundary = float(level) - logExtent;
+  if (distanceToBoundary < kLevelTransitionBand &&
+      cascadeTransitionNoise(position + facingNormal, frameIdx) >= distanceToBoundary / kLevelTransitionBand)
+  {
+    level++;
+  }
+
+  if (level >= cb.terrainArgs.numSideProjectionLevels)
+  {
+    return false;
+  }
+
+  const uint sideView = level * kNumTerrainSideProjectionViews + view;
+  const mat4 worldToTexture = cb.terrainArgs.sideProjectionWorldToTexture[sideView];
+  const vec3 projected = mul(worldToTexture, vec4(position, 1.0)).xyz;
+
+  if (any(projected.xy < 0.0) || any(projected.xy > 1.0))
+  {
+    return false;
+  }
+
+  const vec2 tiledTexcoord = convertSideProjectionTexCoordToTiledTexCoord(sideView, projected.xy);
+
+  // The projection holds only the surface nearest to its camera at each texel. Anything else there,
+  // such as a face behind another steep face, reads what the top-down map has instead.
+  const ivec2 texel = ivec2(tiledTexcoord * cb.terrainArgs.cascadeMapResolution);
+  const float bakedDepth = textures[nonuniformEXT(cb.terrainArgs.sideProjectionDepthTextureIndex)].Load(ivec3(texel, 0)).r;
+  if (bakedDepth >= 1.0)
+  {
+    return false;
+  }
+
+  const float levelScale = float(1u << level);
+  const float cosine = max(dot(facingNormal, cb.terrainArgs.sideProjectionViewDirection[view].xyz), 0.2);
+  const float slopeAcrossTexel = sqrt(max(1.0 - cosine * cosine, 0.0)) / cosine;
+  const float tolerance = cb.terrainArgs.sideProjectionDepthTolerance +
+                          cb.terrainArgs.sideProjectionLevelTexelSize * levelScale * slopeAcrossTexel;
+  if (abs(projected.z - bakedDepth) * cb.terrainArgs.sideProjectionLevelDepthRange * levelScale > tolerance)
+  {
+    return false;
+  }
+
+  interpolatedTexcoord = tiledTexcoord;
+
+  [unroll]
+  for (uint i = 0; i < 3; i++)
+  {
+    texcoords[i] = convertSideProjectionTexCoordToTiledTexCoord(sideView, mul(worldToTexture, vec4(worldPositions[i], 1.0)).xy);
+  }
+
+  return true;
 }
 
 vec3 calcShadowTerminatorOffset(
@@ -581,6 +708,12 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
 
     surfaceInteraction.textureCoordinates = sanitizedInterpolatedTextureCoordinates;
 
+    // Chosen before the tangent frame is generated, since a side projection's texture axes differ from the top-down map's
+    const bool usesTerrainSideProjection =
+      surface.texcoordGenerationMode == uint(TexGenMode::CascadedViewPositions) &&
+      applyTerrainSideProjection(hitPosition, flippedTriangleNormal, worldPositions, cb.frameIdx,
+                                 surfaceInteraction.textureCoordinates, texcoords);
+
     if (GenerateTangents)
     {
       // Note: World positions used here, the original PBRT usage uses model space vertex positions since it calculates the
@@ -592,13 +725,14 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
     }
 
     // Convert texcoords from the 1st cascade to a corresponding cascade in a combined tiled cascades texture space
-    if (surface.texcoordGenerationMode == uint(TexGenMode::CascadedViewPositions))
+    if (surface.texcoordGenerationMode == uint(TexGenMode::CascadedViewPositions) && !usesTerrainSideProjection)
     {
       uint cascadeLevel = 0;
 
       // Calculate the texcoords for cascade maps with more than one cascade.
       // Texcoords for the first cascade are already correct if there's only a single cascade in the map
-      if (cb.terrainArgs.maxCascadeLevel > 0)
+      // and it is the map's first tile
+      if (cb.terrainArgs.maxCascadeLevel > 0 || cb.terrainArgs.firstLevelTile > 0)
       {
         // For surfaces with displacement, we need to ensure the final hit point is within a cascade level.
         // To do this, calculate the furthest texcoord that displacement could return, and use a cascade level that includes that point.

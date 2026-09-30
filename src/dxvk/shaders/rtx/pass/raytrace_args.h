@@ -53,6 +53,11 @@ struct LightRangeInfo {
 };
 
 // Note: ensure 16B alignment
+// Side projection views of the terrain cascade map: the four horizontal directions, then from below
+static const uint kNumTerrainSideProjectionViews = 5;
+static const uint kTerrainSideProjectionViewBelow = 4;
+static const uint kMaxTerrainSideProjectionLevels = 3;
+
 struct TerrainArgs {
   uint2 cascadeMapSize;    // Number of cascade tiles in each dimension
   float2 rcpCascadeMapSize;
@@ -66,7 +71,29 @@ struct TerrainArgs {
   float recenterMargin;
 
   float2 cameraOffsetFromCenter;  // The camera's position in the first cascade's texture space, relative to its centre
-  uint2 pad0;
+  uint firstLevelTile;            // Tile holding level 0; the tiles before it hold the side projections
+  uint pad0;
+
+  // Side projections: the levels below numSideProjectionLevels are also baked from each horizontal
+  // direction and from below, into quarter tiles, sideProjectionWorldToTexture[level * views + view]
+  // mapping a world position to <0, 1> texture space within the view's quarter tile plus <0, 1> depth.
+  uint numSideProjectionLevels;
+  uint sideProjectionDepthTextureIndex;
+  float sideProjectionDepthTolerance;   // World units
+  float sideProjectionLevelTexelSize;   // Texel size of level 0's side projections in world units
+
+  vec3 sideProjectionCenter;          // World space centre shared by all side projection views
+  float sideProjectionLevelHalfWidth;   // Half width of level 0's side projections in world units
+
+  float recenterDistance;               // World units the camera may be from the centre
+  float sideProjectionLevelDepthRange;  // Depth range of level 0's side projections in world units
+  float2 cascadeMapResolution;
+
+  vec3 sceneUp;                       // Direction towards the top-down projection's camera
+  uint pad1;
+
+  vec4 sideProjectionViewDirection[kNumTerrainSideProjectionViews];  // xyz: direction towards each view's camera
+  mat4 sideProjectionWorldToTexture[kMaxTerrainSideProjectionLevels * kNumTerrainSideProjectionViews];
 };
 
 struct NeeCacheArgs {

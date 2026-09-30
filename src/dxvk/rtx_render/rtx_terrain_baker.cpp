@@ -45,6 +45,10 @@
 namespace {
   // By default, a value of 1.f will have 0 displacement.
   const float kDefaultNeutralHeight = 1.f;
+
+  // Faces whose normal is further than this from vertical (as a cosine) may pick a horizontal side
+  // projection, allowing for the band over which a hit dithers between projections.
+  const float kSideProjectionSteepness = 0.8f;
 }
 
 namespace dxvk {
@@ -404,34 +408,22 @@ namespace dxvk {
     return key;
   }
 
-  void TerrainBaker::reportSurfaceOrientation(const DrawCallState& drawCallState) {
+  // Calls visit(up) for every non-degenerate triangle of the draw call, with the cosine of the angle
+  // between its world space face normal and the scene's up axis. Its sign follows the winding. Returns
+  // false when the geometry has no CPU-side positions to measure.
+  template<typename Visitor>
+  static bool visitTriangleUpComponents(const DrawCallState& drawCallState, uint32_t& degenerate, Visitor&& visit) {
     const RasterGeometry& geometry = drawCallState.getGeometryData();
-
-    // The same terrain patch is redrawn every frame; one line per distinct geometry is enough.
-    if (!m_loggedOrientations.insert(geometry.hashes[HashComponents::VertexPosition]).second) {
-      return;
-    }
-
     const GeometryBufferData buffers(geometry);
     if (buffers.positionData == nullptr) {
-      ONCE(Logger::warn("[RTX Terrain Baker] orientation: no CPU-side positions to measure."));
-      return;
+      return false;
     }
 
     const Matrix4 objectToWorld = drawCallState.getTransformData().objectToWorld;
-    const Vector3 upAxis = RtxOptions::zUp() ? Vector3(0.f, 0.f, 1.f) : Vector3(0.f, 1.f, 0.f);
+    const Vector3 upAxis = SceneManager::getSceneUp();
 
     const bool indexed = buffers.indexData != nullptr && geometry.indexCount >= 3;
     const uint32_t cornerCount = indexed ? geometry.indexCount : geometry.vertexCount;
-
-    // Bands are on |n . up|, so a consistent winding is not required to answer the question that
-    // matters: whether one draw call mixes surfaces the cascade can represent with surfaces it
-    // cannot. The signed count is reported separately and does depend on winding.
-    uint32_t flat = 0, gentle = 0, steep = 0, vertical = 0, facingDown = 0, degenerate = 0;
-    float minAbsUp = FLT_MAX;
-    float maxAbsUp = -FLT_MAX;
-    double sumAbsUp = 0.0;
-    uint32_t triangles = 0;
 
     const auto worldPosition = [&](uint32_t index) {
       const float* p = &buffers.positionData[index * buffers.positionStride];
@@ -450,21 +442,37 @@ namespace dxvk {
       }
 
       const Vector3 p0 = worldPosition(i0);
-      const Vector3 edge1 = worldPosition(i1) - p0;
-      const Vector3 edge2 = worldPosition(i2) - p0;
-
-      const Vector3 faceNormal(edge1.y * edge2.z - edge1.z * edge2.y,
-                               edge1.z * edge2.x - edge1.x * edge2.z,
-                               edge1.x * edge2.y - edge1.y * edge2.x);
-      const float length = std::sqrt(faceNormal.x * faceNormal.x +
-                                     faceNormal.y * faceNormal.y +
-                                     faceNormal.z * faceNormal.z);
-      if (length <= 1e-8f) {
+      const Vector3 faceNormal = cross(worldPosition(i1) - p0, worldPosition(i2) - p0);
+      const float faceNormalLength = length(faceNormal);
+      if (faceNormalLength <= 1e-8f) {
         ++degenerate;
         continue;
       }
 
-      const float up = (faceNormal.x * upAxis.x + faceNormal.y * upAxis.y + faceNormal.z * upAxis.z) / length;
+      visit(dot(faceNormal, upAxis) / faceNormalLength);
+    }
+
+    return true;
+  }
+
+  void TerrainBaker::reportSurfaceOrientation(const DrawCallState& drawCallState) {
+    const RasterGeometry& geometry = drawCallState.getGeometryData();
+
+    // The same terrain patch is redrawn every frame; one line per distinct geometry is enough.
+    if (!m_loggedOrientations.insert(geometry.hashes[HashComponents::VertexPosition]).second) {
+      return;
+    }
+
+    // Bands are on |n . up|, so a consistent winding is not required to answer the question that
+    // matters: whether one draw call mixes surfaces the cascade can represent with surfaces it
+    // cannot. The signed count is reported separately and does depend on winding.
+    uint32_t flat = 0, gentle = 0, steep = 0, vertical = 0, facingDown = 0, degenerate = 0;
+    float minAbsUp = FLT_MAX;
+    float maxAbsUp = -FLT_MAX;
+    double sumAbsUp = 0.0;
+    uint32_t triangles = 0;
+
+    const bool measured = visitTriangleUpComponents(drawCallState, degenerate, [&](float up) {
       const float absUp = std::abs(up);
 
       ++triangles;
@@ -480,6 +488,11 @@ namespace dxvk {
       if (up < -0.15f) {
         ++facingDown;
       }
+    });
+
+    if (!measured) {
+      ONCE(Logger::warn("[RTX Terrain Baker] orientation: no CPU-side positions to measure."));
+      return;
     }
 
     if (triangles == 0) {
@@ -500,6 +513,47 @@ namespace dxvk {
       " | degenerate ", degenerate,
       " cullMode ", static_cast<uint32_t>(geometry.cullMode),
       " frontFace ", static_cast<uint32_t>(geometry.frontFace)));
+  }
+
+  const TerrainBaker::SurfaceOrientation& TerrainBaker::getSurfaceOrientation(const DrawCallState& drawCallState) {
+    const Matrix4& objectToWorld = drawCallState.getTransformData().objectToWorld;
+    const XXH64_hash_t key = XXH64(&objectToWorld, sizeof(objectToWorld),
+                                   drawCallState.getGeometryData().hashes[HashComponents::VertexPosition]);
+
+    auto [entry, isNew] = m_surfaceOrientations.try_emplace(key);
+    SurfaceOrientation& orientation = entry->second;
+    if (!isNew) {
+      return orientation;
+    }
+
+    // Classified the way a hit picks its projection: by the axis its normal is closest to
+    uint32_t degenerate = 0;
+    const bool measured = visitTriangleUpComponents(drawCallState, degenerate, [&](float up) {
+      if (std::abs(up) < kSideProjectionSteepness) {
+        ++orientation.steep;
+      } else if (up > 0.f) {
+        ++orientation.upward;
+      } else {
+        ++orientation.downward;
+      }
+    });
+
+    // Without positions there is no telling, so the geometry gets every projection
+    if (!measured) {
+      orientation = SurfaceOrientation { 1, 1, 1 };
+    }
+
+    m_upwardTriangleBalance += static_cast<int64_t>(orientation.upward) - static_cast<int64_t>(orientation.downward);
+    return orientation;
+  }
+
+  bool TerrainBaker::needsHorizontalSideProjections(const SurfaceOrientation& orientation) const {
+    return orientation.steep > 0;
+  }
+
+  bool TerrainBaker::needsSideProjectionFromBelow(const SurfaceOrientation& orientation) const {
+    const uint32_t facingDown = m_upwardTriangleBalance >= 0 ? orientation.downward : orientation.upward;
+    return facingDown > 0;
   }
 
   bool TerrainBaker::bakeDrawCall(Rc<RtxContext> ctx,
@@ -611,10 +665,28 @@ namespace dxvk {
 
     ScopedGpuProfileZone(ctx, "Terrain Baker: Bake Draw Call");
 
-    const float2 float2CascadeLevelResolution = float2 {
-      static_cast<float>(m_bakingParams.cascadeLevelResolution.width),
-      static_cast<float>(m_bakingParams.cascadeLevelResolution.height)
-    };
+    bool bakeHorizontalSideProjections = false;
+    bool bakeSideProjectionFromBelow = false;
+    if (cascadeMap.sideProjectionLevels() > 0) {
+      const SurfaceOrientation& orientation = getSurfaceOrientation(drawCallState);
+      bakeHorizontalSideProjections = needsHorizontalSideProjections(orientation);
+      bakeSideProjectionFromBelow = needsSideProjectionFromBelow(orientation);
+      // Takes effect from the next frame's layout, which rebakes everything with the side projections
+      m_sideProjectionsNeeded |= bakeHorizontalSideProjections || bakeSideProjectionFromBelow;
+    }
+    const bool bakeSideProjections =
+      m_bakingParams.numSideProjectionLevels > 0 && m_sideProjectionDepthTarget != nullptr &&
+      (bakeHorizontalSideProjections || bakeSideProjectionFromBelow);
+
+    // Side projections bake with their own depth test and culling, and restore the draw call's afterwards
+    const DxvkRsInfo& rsInfo = dxvkCtxState.gp.state.rs;
+    const DxvkRasterizerState prevRasterizerState = {
+      rsInfo.polygonMode(), rsInfo.cullMode(), rsInfo.frontFace(), rsInfo.depthClipEnable(),
+      rsInfo.depthBiasEnable(), rsInfo.conservativeMode(), rsInfo.sampleCount() };
+    const DxvkDsInfo& dsInfo = dxvkCtxState.gp.state.ds;
+    const DxvkDepthStencilState prevDepthStencilState = {
+      dsInfo.enableDepthTest(), dsInfo.enableDepthWrite(), dsInfo.enableStencilTest(), dsInfo.depthCompareOp(),
+      dxvkCtxState.gp.state.dsFront.state(), dxvkCtxState.gp.state.dsBack.state() };
 
     // Save viewports
     const uint32_t prevViewportCount = dxvkCtxState.gp.state.rs.viewportCount();
@@ -745,65 +817,46 @@ namespace dxvk {
       }
 
       // Bind terrain texture as render target 
-      {
-        const RtxMipmap::Resource& terrainResource = getTerrainTexture(ctx, textureManger, textureType, m_bakingParams.cascadeMapResolution.width,
-                            m_bakingParams.cascadeMapResolution.height);
-        const Rc<DxvkImageView>& terrainTextureView = terrainResource.views.empty() ? terrainResource.view : terrainResource.views[0];
-
-        if (terrainTextureView == nullptr) {
-          if (textureType == ReplacementMaterialTextureType::AlbedoOpacity) {
-            ONCE(Logger::err(str::format("[RTX Terrain Baker] Failed to retrieve a terrain texture of type albedo opacity. This texture is required for baking of any replacement texture. Skipping baking of the material for this draw call.")));
-            break;
-          } else {
-            ONCE(Logger::err(str::format("[RTX Terrain Baker] Failed to retrieve a terrain texture of type ", static_cast<uint32_t>(textureType), ". Skipping baking of the texture.")));
-            continue;
-          }
+      const RtxMipmap::Resource& terrainResource = getTerrainTexture(ctx, textureManger, textureType, m_bakingParams.cascadeMapResolution.width,
+                          m_bakingParams.cascadeMapResolution.height);
+      const Rc<DxvkImageView>& terrainTextureView = terrainResource.views.empty() ? terrainResource.view : terrainResource.views[0];
+      if (terrainTextureView == nullptr) {
+        if (textureType == ReplacementMaterialTextureType::AlbedoOpacity) {
+          ONCE(Logger::err(str::format("[RTX Terrain Baker] Failed to retrieve a terrain texture of type albedo opacity. This texture is required for baking of any replacement texture. Skipping baking of the material for this draw call.")));
+          break;
+        } else {
+          ONCE(Logger::err(str::format("[RTX Terrain Baker] Failed to retrieve a terrain texture of type ", static_cast<uint32_t>(textureType), ". Skipping baking of the texture.")));
+          continue;
         }
-
-        // Bind the target terrain texture as render target
-        DxvkRenderTargets terrainRt;
-        terrainRt.color[0].view = terrainTextureView;
-        terrainRt.color[0].layout = VK_IMAGE_LAYOUT_GENERAL;
-        ctx->bindRenderTargets(terrainRt);
-      
-        m_materialTextures[textureType].markAsBaked();
       }
 
-      Matrix4 worldSceneView = m_bakingParams.sceneView * world;
+      // Bind the target terrain texture as render target
+      DxvkRenderTargets terrainRt;
+      terrainRt.color[0].view = terrainTextureView;
+      terrainRt.color[0].layout = VK_IMAGE_LAYOUT_GENERAL;
+      ctx->bindRenderTargets(terrainRt);
+    
+      m_materialTextures[textureType].markAsBaked();
 
-      // Render into all cascade levels. 
-      // The levels are tiled left to right top to bottom in the combined render target texture
-      for (uint32_t iCascade = 0; iCascade < m_bakingParams.numCascades; iCascade++) {
+      // Account for the difference in UV density between the input terrain material and the baked terrain.
+      // This part is just pre-multiplying the "multiply by output uv density".  The input UV density is accounted for in `postprocessTextureReadForTerrainBaking`
+      const float cascadeUvDensity = Material::Properties::displaceInFactor() / std::max(m_bakingParams.cascadeMapResolution.width, m_bakingParams.cascadeMapResolution.height);
 
-        Vector2i cascade2DIndex;
-        cascade2DIndex.y = iCascade / m_bakingParams.cascadeMapSize.x;
-        cascade2DIndex.x = iCascade - cascade2DIndex.y * m_bakingParams.cascadeMapSize.x;
-
-        // Set viewport which maps clip space <-1, 1> to screen space <0, resolution>.
-        // Accounts for inverted y coordinate in Vulkan
-        VkViewport viewport {
-          cascade2DIndex.x * float2CascadeLevelResolution.x,
-          (cascade2DIndex.y + 1) * float2CascadeLevelResolution.y,
-          float2CascadeLevelResolution.x,
-          -float2CascadeLevelResolution.y,
+      const auto bakeView = [&](const VkRect2D& rect, const Matrix4& view, const Matrix4& projection) {
+        // Maps clip space <-1, 1> to the rect, accounting for the inverted y coordinate in Vulkan
+        const VkViewport viewport {
+          static_cast<float>(rect.offset.x),
+          static_cast<float>(rect.offset.y) + static_cast<float>(rect.extent.height),
+          static_cast<float>(rect.extent.width),
+          -static_cast<float>(rect.extent.height),
           0.f, 1.f
         };
+        ctx->setViewports(1, &viewport, &rect);
 
-        VkOffset2D cascadeOffset = VkOffset2D {
-          static_cast<int>(cascade2DIndex.x * m_bakingParams.cascadeLevelResolution.width),
-          static_cast<int>(cascade2DIndex.y * m_bakingParams.cascadeLevelResolution.height) };
-
-        // Set scissor window which clips the screen space
-        VkRect2D scissor = { cascadeOffset, m_bakingParams.cascadeLevelResolution };
-
-        ctx->setViewports(1, &viewport, &scissor);
-
-        // Account for the difference in UV density between the input terrain material and the baked terrain.
-        // This part is just pre-multiplying the "multiply by output uv density".  The input UV density is accounted for in `postprocessTextureReadForTerrainBaking`
-        float cascadeUvDensity = Material::Properties::displaceInFactor() / std::max(m_bakingParams.cascadeMapResolution.width, m_bakingParams.cascadeMapResolution.height);
+        const Matrix4 worldView = view * world;
 
         // Update constant buffers
-        // 
+        //
         D3D9SharedPS& sharedState = ctx->allocAndMapPSSharedStateConstantBuffer();
         for (int i = 0; i < caps::TextureStageCount; ++i) {
           sharedState.Stages[i] = prevSharedState.Stages[i];
@@ -814,21 +867,21 @@ namespace dxvk {
         sharedState.Stages[kTerrainBakerSecondaryTextureStage].texturePreOffset = texturePreOffset;
         sharedState.Stages[kTerrainBakerSecondaryTextureStage].textureScale = textureScale * cascadeUvDensity;
         sharedState.Stages[kTerrainBakerSecondaryTextureStage].texturePostOffset = neutralDisplacement;
-        
+
         // Programmable VS path
         if (drawCallState.usesVertexShader) {
           D3D9RtxVertexCaptureData& cbData = ctx->allocAndMapVertexCaptureConstantBuffer();
           cbData = prevCB.programmablePipeline;
-          cbData.customWorldToProjection = m_bakingParams.bakingCameraOrthoProjection[iCascade] * worldSceneView;
-        } 
+          cbData.customWorldToProjection = projection * worldView;
+        }
         else { // Fixed function path
           D3D9FixedFunctionVS& cbData = ctx->allocAndMapFixedFunctionVSConstantBuffer();
           cbData = prevCB.fixedFunction;
 
-          cbData.InverseView = m_bakingParams.inverseSceneView;
-          cbData.View = m_bakingParams.sceneView;
-          cbData.WorldView = worldSceneView;
-          cbData.Projection = m_bakingParams.bakingCameraOrthoProjection[iCascade];
+          cbData.InverseView = inverse(view);
+          cbData.View = view;
+          cbData.WorldView = worldView;
+          cbData.Projection = projection;
 
           // Disable lighting
           for (auto& light : cbData.Lights) {
@@ -843,6 +896,53 @@ namespace dxvk {
         } else {
           ctx->DxvkContext::drawIndexed(drawParams.indexCount, drawParams.instanceCount, drawParams.firstIndex, drawParams.vertexOffset, 0);
         }
+      };
+
+      // Render into all cascade levels
+      for (uint32_t iCascade = 0; iCascade < m_bakingParams.numCascades; iCascade++) {
+        bakeView(getTopDownViewRect(iCascade), m_bakingParams.sceneView, m_bakingParams.bakingCameraOrthoProjection[iCascade]);
+      }
+
+      if (bakeSideProjections) {
+        DxvkRenderTargets sideProjectionRt;
+        sideProjectionRt.color[0].view = terrainTextureView;
+        sideProjectionRt.color[0].layout = VK_IMAGE_LAYOUT_GENERAL;
+        sideProjectionRt.depth.view = m_sideProjectionDepthTarget;
+        sideProjectionRt.depth.layout = VK_IMAGE_LAYOUT_GENERAL;
+        ctx->bindRenderTargets(sideProjectionRt);
+
+        // Every layer of a surface is drawn from the same vertices through the same matrices, so its
+        // overlays land at exactly the depth of its base and pass a less-or-equal test.
+        DxvkDepthStencilState sideProjectionDepthStencilState = prevDepthStencilState;
+        sideProjectionDepthStencilState.enableDepthTest = VK_TRUE;
+        sideProjectionDepthStencilState.enableDepthWrite = VK_TRUE;
+        sideProjectionDepthStencilState.enableStencilTest = VK_FALSE;
+        sideProjectionDepthStencilState.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        ctx->setDepthStencilState(sideProjectionDepthStencilState);
+
+        DxvkRasterizerState sideProjectionRasterizerState = prevRasterizerState;
+        sideProjectionRasterizerState.polygonMode = VK_POLYGON_MODE_FILL;
+        sideProjectionRasterizerState.depthClipEnable = VK_TRUE;
+        sideProjectionRasterizerState.depthBiasEnable = VK_FALSE;
+        switch (cascadeMap.sideProjectionCulling()) {
+        case TerrainSideProjectionCulling::None:  sideProjectionRasterizerState.cullMode = VK_CULL_MODE_NONE; break;
+        case TerrainSideProjectionCulling::Back:  sideProjectionRasterizerState.cullMode = VK_CULL_MODE_BACK_BIT; break;
+        case TerrainSideProjectionCulling::Front: sideProjectionRasterizerState.cullMode = VK_CULL_MODE_FRONT_BIT; break;
+        }
+        ctx->setRasterizerState(sideProjectionRasterizerState);
+
+        const uint32_t numSideViews = m_bakingParams.numSideProjectionLevels * kNumTerrainSideProjectionViews;
+        for (uint32_t sideView = 0; sideView < numSideViews; sideView++) {
+          const bool isViewFromBelow = sideView % kNumTerrainSideProjectionViews == kTerrainSideProjectionViewBelow;
+          if (isViewFromBelow ? !bakeSideProjectionFromBelow : !bakeHorizontalSideProjections) {
+            continue;
+          }
+          bakeView(getSideProjectionViewRect(sideView),
+                   m_bakingParams.sideProjectionView[sideView], m_bakingParams.sideProjectionOrthoProjection[sideView]);
+        }
+
+        ctx->setDepthStencilState(prevDepthStencilState);
+        ctx->setRasterizerState(prevRasterizerState);
       }
 
       if (textureType == ReplacementMaterialTextureType::AlbedoOpacity) {
@@ -1037,9 +1137,50 @@ namespace dxvk {
     args.recenterMargin = cascadeMap.recenterDistance() / (2.f * cascadeMap.levelHalfWidth());
     const Vector4 cameraTexcoord = m_bakingParams.viewToCascade0TextureSpace * Vector4(0.f, 0.f, 0.f, 1.f);
     args.cameraOffsetFromCenter = float2 { cameraTexcoord.x - 0.5f, cameraTexcoord.y - 0.5f };
+    args.firstLevelTile = m_bakingParams.numSideProjectionTiles;
+
+    const float metersToWorldUnitScale = RtxOptions::getMeterToWorldUnitScale();
+    const float levelHalfWidth = metersToWorldUnitScale * cascadeMap.levelHalfWidth();
+    const bool hasSideProjections =
+      m_bakingParams.numSideProjectionLevels > 0 && m_sideProjectionDepthTextureIndex != kSurfaceMaterialInvalidTextureIndex;
+
+    args.numSideProjectionLevels = hasSideProjections ? m_bakingParams.numSideProjectionLevels : 0;
+    args.sideProjectionDepthTextureIndex = m_sideProjectionDepthTextureIndex;
+    args.sideProjectionDepthTolerance = metersToWorldUnitScale * cascadeMap.sideProjectionDepthTolerance();
+    args.sideProjectionLevelTexelSize = 2.f * levelHalfWidth / std::max(m_bakingParams.cascadeLevelResolution.width / 2, 1u);
+    args.sideProjectionCenter = m_cascadeCenter.value_or(Vector3(0.f));
+    args.sideProjectionLevelHalfWidth = levelHalfWidth;
+    args.recenterDistance = metersToWorldUnitScale * cascadeMap.recenterDistance();
+    args.sideProjectionLevelDepthRange = 2.f * levelHalfWidth;
+    args.cascadeMapResolution = float2 {
+      static_cast<float>(m_bakingParams.cascadeMapResolution.width),
+      static_cast<float>(m_bakingParams.cascadeMapResolution.height) };
+    args.sceneUp = SceneManager::getSceneUp();
+
+    for (uint32_t view = 0; view < kNumTerrainSideProjectionViews; view++) {
+      args.sideProjectionViewDirection[view] = Vector4(m_bakingParams.sideProjectionViewDirection[view], 0.f);
+    }
+
+    // Converts from clip space <-1, 1> to <0, 1> and flips y for Vulkan, as for the top-down levels
+    const Matrix4 textureOffset = Matrix4(Vector4(.5f, 0, 0, 0),
+                                          Vector4(0, -.5f, 0, 0),
+                                          Vector4(0, 0, 1, 0),
+                                          Vector4(.5f, .5f, 0, 1));
+    for (uint32_t sideView = 0; sideView < args.numSideProjectionLevels * kNumTerrainSideProjectionViews; sideView++) {
+      args.sideProjectionWorldToTexture[sideView] =
+        textureOffset * m_bakingParams.sideProjectionOrthoProjection[sideView] * m_bakingParams.sideProjectionView[sideView];
+    }
 
     return args;
   }
+
+  static RemixGui::ComboWithKey<TerrainSideProjectionCulling> sideProjectionCullingCombo {
+    "Side Projection Culling",
+    RemixGui::ComboWithKey<TerrainSideProjectionCulling>::ComboEntries { {
+        {TerrainSideProjectionCulling::None, "None"},
+        {TerrainSideProjectionCulling::Back, "Back"},
+        {TerrainSideProjectionCulling::Front, "Front"},
+    } } };
 
   void TerrainBaker::showImguiSettings() const {
 
@@ -1097,6 +1238,9 @@ namespace dxvk {
         RemixGui::DragInt("Texture Resolution Per Cascade Level", &cascadeMap.levelResolutionObject(), 8.f, 1, 32 * 1024);
         RemixGui::Checkbox("Expand Last Cascade Level", &cascadeMap.expandLastCascadeObject());
         RemixGui::DragFloat("Recenter Distance [meters]", &cascadeMap.recenterDistanceObject(), 0.1f, 0.f, 10000.f, "%.1f", sliderFlags);
+        RemixGui::DragInt("Side Projection Levels", &cascadeMap.sideProjectionLevelsObject(), 0.1f, 0, kMaxTerrainSideProjectionLevels);
+        sideProjectionCullingCombo.getKey(&cascadeMap.sideProjectionCullingObject());
+        RemixGui::DragFloat("Side Projection Depth Tolerance [meters]", &cascadeMap.sideProjectionDepthToleranceObject(), 0.01f, 0.f, 10.f, "%.2f", sliderFlags);
 
         if (RemixGui::CollapsingHeader("Statistics")) {
           ImGui::Indent();
@@ -1105,6 +1249,8 @@ namespace dxvk {
           ImGui::Text("Cascade Level Resolution: %u, %u", m_bakingParams.cascadeLevelResolution.width, m_bakingParams.cascadeLevelResolution.height);
           ImGui::Text("Cascade Map Resolution: %u, %u", m_bakingParams.cascadeMapResolution.width, m_bakingParams.cascadeMapResolution.height);
           ImGui::Text("Draw Calls Baked / Reused Last Frame: %u / %u", m_numDrawsBakedLastFrame, m_numDrawsReusedLastFrame);
+          ImGui::Text("Side Projection Levels: %u%s", m_bakingParams.numSideProjectionLevels,
+                      m_sideProjectionsNeeded ? "" : " (no terrain has needed them yet)");
         
           ImGui::Unindent();
         }
@@ -1177,6 +1323,11 @@ namespace dxvk {
       if (m_numDrawsBakedThisFrame > 0 && m_materialTextures[ReplacementMaterialTextureType::Height].texture.isValid()) {
         ScopedGpuProfileZone(ctx, "Terrain Height Mip Map");
         RtxMipmap::updateMipmap(ctx, m_materialTextures[ReplacementMaterialTextureType::Height].texture, MipmapMethod::Maximum);
+      }
+
+      m_sideProjectionDepthTextureIndex = kSurfaceMaterialInvalidTextureIndex;
+      if (m_sideProjectionDepth.view != nullptr) {
+        ctx->getSceneManager().trackTexture(TextureRef(m_sideProjectionDepth.view), m_sideProjectionDepthTextureIndex, true, false);
       }
     }
   }
@@ -1264,6 +1415,7 @@ namespace dxvk {
 
     updateTextureFormat(dxvkCtxState);
     calculateBakingParameters(ctx, dxvkCtxState);
+    updateSideProjectionDepth(ctx);
     beginBakedContent(ctx);
   }
 
@@ -1279,6 +1431,11 @@ namespace dxvk {
                    m_bakingParams.bakingCameraOrthoProjection.size() * sizeof(Matrix4));
     hash = combine(hash, &m_bakingParams.cascadeMapResolution, sizeof(m_bakingParams.cascadeMapResolution));
     hash = combine(hash, &m_bakingParams.cascadeLevelResolution, sizeof(m_bakingParams.cascadeLevelResolution));
+    hash = combine(hash, m_bakingParams.sideProjectionView.data(), m_bakingParams.sideProjectionView.size() * sizeof(Matrix4));
+    hash = combine(hash, m_bakingParams.sideProjectionOrthoProjection.data(),
+                   m_bakingParams.sideProjectionOrthoProjection.size() * sizeof(Matrix4));
+    const TerrainSideProjectionCulling sideProjectionCulling = cascadeMap.sideProjectionCulling();
+    hash = combine(hash, &sideProjectionCulling, sizeof(sideProjectionCulling));
 
     const float displacement[] = { m_prevFrameMaxDisplaceIn, m_prevFrameMaxDisplaceOut, Material::Properties::displaceInFactor() };
     hash = combine(hash, displacement, sizeof(displacement));
@@ -1312,6 +1469,15 @@ namespace dxvk {
     m_bakedLayoutHash = layoutHash;
     m_bakedDraws.clear();
     m_bakedContentLost = false;
+
+    // Unlike the colour it guards, stale depth would reject the surfaces now being baked
+    if (m_sideProjectionDepth.image != nullptr) {
+      VkImageSubresourceRange subRange = {};
+      subRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+      subRange.levelCount = 1;
+      subRange.layerCount = 1;
+      ctx->clearDepthStencilImage(m_sideProjectionDepth.image, VkClearDepthStencilValue { 1.f, 0 }, subRange);
+    }
 
     if (clearTerrainBeforeBaking() && !debugDisableBaking()) {
       for (uint32_t i = 0; i < ReplacementMaterialTextureType::Count; i++) {
@@ -1466,7 +1632,6 @@ namespace dxvk {
     }
 
     m_bakingParams.sceneView = sceneView;
-    m_bakingParams.inverseSceneView = inverse(sceneView);
 
     // Number of cascades required to cover the whole bbox
     const uint32_t numRequiredCascades = 
@@ -1479,44 +1644,23 @@ namespace dxvk {
     const bool isLastCascadeExpanded = m_bakingParams.numCascades != numRequiredCascades;
     m_bakingParams.lastCascadeScale = 1.f;
 
-    m_bakingParams.cascadeMapSize.x = static_cast<uint32_t>(ceilf(sqrtf(static_cast<float>(m_bakingParams.numCascades))));
-    m_bakingParams.cascadeMapSize.y = static_cast<uint32_t>(ceilf(static_cast<float>(m_bakingParams.numCascades) / m_bakingParams.cascadeMapSize.x));
+    m_bakingParams.numSideProjectionLevels =
+      m_sideProjectionsNeeded ? std::min(cascadeMap.sideProjectionLevels(), m_bakingParams.numCascades) : 0;
+    m_bakingParams.numSideProjectionTiles = (m_bakingParams.numSideProjectionLevels * kNumTerrainSideProjectionViews + 3) / 4;
+
+    // The side projection tiles must all fit in the first row, which is all their depth buffer covers
+    const uint32_t numTiles = m_bakingParams.numSideProjectionTiles + m_bakingParams.numCascades;
+    m_bakingParams.cascadeMapSize.x = std::max(static_cast<uint32_t>(ceilf(sqrtf(static_cast<float>(numTiles)))),
+                                               m_bakingParams.numSideProjectionTiles);
+    m_bakingParams.cascadeMapSize.y = static_cast<uint32_t>(ceilf(static_cast<float>(numTiles) / m_bakingParams.cascadeMapSize.x));
 
     m_bakingParams.bakingCameraOrthoProjection.resize(m_bakingParams.numCascades);
 
     // Calculate cascade map resolution
     calculateCascadeMapResolution(ctx->getDevice());
 
-    const float2 float2CascadeLevelResolution = float2 {
-      static_cast<float>(m_bakingParams.cascadeLevelResolution.width),
-      static_cast<float>(m_bakingParams.cascadeLevelResolution.height)
-    };
-
-    // Calculate params for each cascade level.
-    // The levels are tiled left to right top to bottom in the combined render target texture
+    // Calculate params for each cascade level
     for (uint32_t iCascade = 0; iCascade < m_bakingParams.numCascades; iCascade++) {
-
-      Vector2i cascade2DIndex;
-      cascade2DIndex.y = iCascade / m_bakingParams.cascadeMapSize.x;
-      cascade2DIndex.x = iCascade - cascade2DIndex.y * m_bakingParams.cascadeMapSize.x;
-
-      // Set viewport which maps clip space <-1, 1> to screen space <0, resolution>.
-      // Accounts for inverted y coordinate in Vulkan
-      VkViewport viewport = VkViewport {
-        cascade2DIndex.x * float2CascadeLevelResolution.x,
-        (cascade2DIndex.y + 1) * float2CascadeLevelResolution.y,
-        float2CascadeLevelResolution.x,
-        -float2CascadeLevelResolution.y,
-        0.f, 1.f
-      };
-
-      VkOffset2D cascadeOffset = VkOffset2D {
-        static_cast<int>(cascade2DIndex.x * m_bakingParams.cascadeLevelResolution.width),
-        static_cast<int>(cascade2DIndex.y * m_bakingParams.cascadeLevelResolution.height) };
-
-      // Set scissor window which clips the screen space
-      VkRect2D scissor = VkRect2D { cascadeOffset, m_bakingParams.cascadeLevelResolution };
-
       // Half width of the cascade level
       float halfWidth = metersToWorldUnitScale * cascadeMap.levelHalfWidth() * pow(2, iCascade);
 
@@ -1543,5 +1687,149 @@ namespace dxvk {
         m_bakingParams.viewToCascade0TextureSpace = textureOffset * m_bakingParams.bakingCameraOrthoProjection[iCascade] * sceneView * camera.getViewToWorld();
       }
     }
+
+    calculateSideProjectionParameters(cascadeCenter, zNear);
+  }
+
+  // Each level's side projection views look at a cube around the map's centre, as wide as the level:
+  // from each horizontal direction with the scene's up as the texture's vertical axis, and from below.
+  // A view's depth range spans the cube, so only surfaces within the level can occlude one another.
+  void TerrainBaker::calculateSideProjectionParameters(const Vector3& cascadeCenter, float zNear) {
+    const uint32_t numSideViews = m_bakingParams.numSideProjectionLevels * kNumTerrainSideProjectionViews;
+    m_bakingParams.sideProjectionView.resize(numSideViews);
+    m_bakingParams.sideProjectionOrthoProjection.resize(numSideViews);
+
+    const Vector3 up = SceneManager::getSceneUp();
+    const Vector3 forward = SceneManager::getSceneForward();
+    const Vector3 right = SceneManager::calculateSceneRight();
+
+    // The side views keep the top-down view's handedness, so that the draw call's winding means the same in all of them
+    const float handedness = dot(cross(right, forward), up);
+
+    const Vector3 directions[kNumTerrainSideProjectionViews] = { right, -right, forward, -forward, -up };
+    std::copy(std::begin(directions), std::end(directions), std::begin(m_bakingParams.sideProjectionViewDirection));
+
+    for (uint32_t level = 0; level < m_bakingParams.numSideProjectionLevels; level++) {
+      const float halfWidth = RtxOptions::getMeterToWorldUnitScale() * cascadeMap.levelHalfWidth() * static_cast<float>(1u << level);
+
+      for (uint32_t view = 0; view < kNumTerrainSideProjectionViews; view++) {
+        const uint32_t sideView = level * kNumTerrainSideProjectionViews + view;
+
+        const Vector3& towardsCamera = directions[view];
+        const Vector3 textureUp = view == kTerrainSideProjectionViewBelow ? forward : up;
+        Vector3 textureRight = cross(textureUp, towardsCamera);
+        if (dot(cross(textureRight, textureUp), towardsCamera) * handedness < 0.f) {
+          textureRight = -textureRight;
+        }
+
+        const Vector3 position = cascadeCenter + (halfWidth + zNear) * towardsCamera;
+        const Vector3 translation = Vector3(
+          dot(textureRight, -position),
+          dot(textureUp, -position),
+          dot(towardsCamera, -position));
+
+        Matrix4& viewMatrix = m_bakingParams.sideProjectionView[sideView];
+        viewMatrix[0] = Vector4(textureRight.x, textureUp.x, towardsCamera.x, 0.f);
+        viewMatrix[1] = Vector4(textureRight.y, textureUp.y, towardsCamera.y, 0.f);
+        viewMatrix[2] = Vector4(textureRight.z, textureUp.z, towardsCamera.z, 0.f);
+        viewMatrix[3] = Vector4(translation.x, translation.y, translation.z, 1.f);
+
+        float4x4& projection = *reinterpret_cast<float4x4*>(&m_bakingParams.sideProjectionOrthoProjection[sideView]);
+        projection.SetupByOrthoProjection(-halfWidth, halfWidth, -halfWidth, halfWidth, zNear, zNear + 2.f * halfWidth);
+      }
+    }
+  }
+
+  // Top-down levels follow the side projection tiles, left to right, top to bottom
+  VkRect2D TerrainBaker::getTopDownViewRect(uint32_t level) const {
+    const uint32_t tile = m_bakingParams.numSideProjectionTiles + level;
+    const VkExtent2D& resolution = m_bakingParams.cascadeLevelResolution;
+    return VkRect2D {
+      VkOffset2D {
+        static_cast<int32_t>((tile % m_bakingParams.cascadeMapSize.x) * resolution.width),
+        static_cast<int32_t>((tile / m_bakingParams.cascadeMapSize.x) * resolution.height) },
+      resolution };
+  }
+
+  // Side projection views take a quarter of a tile each, four to a tile, in the first row
+  VkRect2D TerrainBaker::getSideProjectionViewRect(uint32_t sideView) const {
+    const uint32_t tile = sideView / 4;
+    const uint32_t quarter = sideView % 4;
+    const VkExtent2D quarterResolution = {
+      m_bakingParams.cascadeLevelResolution.width / 2, m_bakingParams.cascadeLevelResolution.height / 2 };
+    return VkRect2D {
+      VkOffset2D {
+        static_cast<int32_t>(tile * m_bakingParams.cascadeLevelResolution.width + (quarter % 2) * quarterResolution.width),
+        static_cast<int32_t>((quarter / 2) * quarterResolution.height) },
+      quarterResolution };
+  }
+
+  void TerrainBaker::updateSideProjectionDepth(Rc<DxvkContext> ctx) {
+    RtxTextureManager& textureManager = ctx->getCommonObjects()->getTextureManager();
+
+    if (m_bakingParams.numSideProjectionTiles == 0) {
+      releaseSideProjectionDepth(textureManager);
+      return;
+    }
+
+    const VkExtent3D extent = {
+      m_bakingParams.numSideProjectionTiles * m_bakingParams.cascadeLevelResolution.width,
+      m_bakingParams.cascadeLevelResolution.height,
+      1 };
+    if (m_sideProjectionDepth.image != nullptr && m_sideProjectionDepth.image->info().extent == extent) {
+      return;
+    }
+
+    releaseSideProjectionDepth(textureManager);
+
+    const VkFormat format = VK_FORMAT_D16_UNORM;
+
+    DxvkImageCreateInfo desc;
+    desc.type = VK_IMAGE_TYPE_2D;
+    desc.format = format;
+    desc.flags = 0;
+    desc.sampleCount = VK_SAMPLE_COUNT_1_BIT;
+    desc.extent = extent;
+    desc.numLayers = 1;
+    desc.mipLevels = 1;
+    desc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    desc.stages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                  VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    desc.access = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    desc.tiling = VK_IMAGE_TILING_OPTIMAL;
+    desc.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    m_sideProjectionDepth.image = ctx->getDevice()->createImage(
+      desc, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, DxvkMemoryStats::Category::RTXRenderTarget, "terrain side projection depth");
+
+    DxvkImageViewCreateInfo viewInfo;
+    viewInfo.type = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    viewInfo.minLevel = 0;
+    viewInfo.numLevels = 1;
+    viewInfo.minLayer = 0;
+    viewInfo.numLayers = 1;
+
+    viewInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    m_sideProjectionDepth.view = ctx->getDevice()->createImageView(m_sideProjectionDepth.image, viewInfo);
+    viewInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    m_sideProjectionDepthTarget = ctx->getDevice()->createImageView(m_sideProjectionDepth.image, viewInfo);
+
+    ctx->changeImageLayout(m_sideProjectionDepth.image, VK_IMAGE_LAYOUT_GENERAL);
+
+    // Cleared by beginBakedContent, which rebakes everything into it
+    m_bakedContentLost = true;
+  }
+
+  void TerrainBaker::releaseSideProjectionDepth(RtxTextureManager& textureManager) {
+    if (m_sideProjectionDepth.view != nullptr) {
+      // WAR (REMIX-1557) to force release the texture reference from the texture cache, as for the terrain textures
+      TextureRef textureRef = TextureRef(m_sideProjectionDepth.view);
+      textureManager.releaseTexture(textureRef);
+    }
+    m_sideProjectionDepth.reset();
+    m_sideProjectionDepthTarget = nullptr;
+    m_sideProjectionDepthTextureIndex = kSurfaceMaterialInvalidTextureIndex;
   }
 }
