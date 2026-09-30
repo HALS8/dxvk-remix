@@ -136,10 +136,14 @@ namespace dxvk {
     }
   }
 
-  // A draw call is recognised across frames by its shader and the buffer ranges it reads. Instances
-  // of one mesh share all of those and differ only in their constants; the order they are submitted
-  // in within a frame is what tells them apart.
+  // A draw call is recognised across frames by its shader, the buffer ranges it reads and where its
+  // world transform places it. Instances of one mesh share the shader and buffers, and a game is free
+  // to submit them in a different order every frame, so their placement is what tells them apart;
+  // the submission order only separates instances that share a placement too. The placement is
+  // coarsened so that a drifting transform keeps its identity.
   XXH64_hash_t D3D9Rtx::vertexShaderDrawKey(const RasterGeometry& geoData) {
+    constexpr float kPlacementCellsPerUnit = 4.f;
+    const Matrix4& world = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)];
     struct DrawIdentity {
       const void* shader;
       const void* vertexBuffer;
@@ -148,11 +152,15 @@ namespace dxvk {
       size_t indexOffset;
       uint32_t vertexCount;
       uint32_t indexCount;
+      int32_t placement[3];
     } identity {
       d3d9State().vertexShader->GetCommonShader(),
       geoData.positionBuffer.buffer().ptr(), geoData.positionBuffer.offset() + geoData.positionBuffer.offsetFromSlice(),
       geoData.indexBuffer.buffer().ptr(), geoData.indexBuffer.offset(),
-      geoData.vertexCount, geoData.indexCount
+      geoData.vertexCount, geoData.indexCount,
+      { static_cast<int32_t>(std::floor(world[3][0] * kPlacementCellsPerUnit)),
+        static_cast<int32_t>(std::floor(world[3][1] * kPlacementCellsPerUnit)),
+        static_cast<int32_t>(std::floor(world[3][2] * kPlacementCellsPerUnit)) }
     };
     const XXH64_hash_t identityHash = XXH3_64bits(&identity, sizeof(identity));
     const uint32_t occurrence = m_vsDrawOccurrencesThisFrame[identityHash]++;
