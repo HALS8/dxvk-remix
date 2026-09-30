@@ -557,6 +557,31 @@ extern "C" {
   // rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
   #define REMIXAPI_D3D9_RS_FORCE_CATEGORIES 0x52584302u
 
+  // D3D9 per-draw albedo tint, masked by the albedo texture's alpha.
+  //
+  // Some games keep a mask in the albedo texture's alpha that says where a per-draw constant
+  // colour tints the surface -- cloth or armour in a player-chosen colour -- and apply it in a
+  // pixel shader, which Remix does not run. A caller that knows the colour sets it as
+  // D3DRS_TEXTUREFACTOR (ignored by D3D9 while a pixel shader is bound), sets this render state to
+  // REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA, and the following draws get
+  //
+  //   albedo.rgb *= lerp(D3DRS_TEXTUREFACTOR.rgb, 1, albedo.a)
+  //
+  // where albedo.a is the alpha sampled from the albedo texture, a replacement material's
+  // included: 1 leaves a texel as it is, 0 takes the full tint. The tint is gamma-encoded like the
+  // texture colour and is applied in that space. The alpha is spent on the mask, so these draws do
+  // not take opacity from it; texture stage alpha operations still combine the other sources.
+  //
+  //   device->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_XRGB(r, g, b));
+  //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_ALBEDO_TINT,
+  //                          REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA);
+  //
+  // REMIXAPI_D3D9_ALBEDO_TINT_NONE turns it off; other values are reserved and act as NONE. Same
+  // lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  #define REMIXAPI_D3D9_RS_ALBEDO_TINT 0x52584303u
+  #define REMIXAPI_D3D9_ALBEDO_TINT_NONE 0u
+  #define REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA 1u
+
 
   typedef struct remixapi_AnimatedFloat1D {
     float*     pData;

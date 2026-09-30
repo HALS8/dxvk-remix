@@ -15,6 +15,7 @@
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
 #include "../dxvk/rtx_render/rtx_fork_hooks.h"
+#include <remix/remix_c.h>
 
 #include <algorithm>
 #include <cassert>
@@ -885,6 +886,7 @@ namespace dxvk {
 
     // Fetch all the legacy state (colour modes, alpha test, etc...)
     setLegacyMaterialState(m_parent, m_parent->m_alphaSwizzleRTs & (1 << kRenderTargetIndex), m_activeDrawCallState.materialData);
+    m_activeDrawCallState.materialData.isAlbedoTintMaskedByAlpha = m_albedoTintMaskedByAlpha;
 
     // Fetch fog state 
     setFogState(m_parent, m_activeDrawCallState.fogState);
@@ -973,6 +975,11 @@ namespace dxvk {
   void D3D9Rtx::SetForcedCategories(uint32_t flags) {
     m_forcedCategoryBits = flags;
     m_forcedCategories = fork_hooks::toRtCategories(flags);
+  }
+
+  void D3D9Rtx::SetAlbedoTint(uint32_t mode) {
+    m_albedoTint = mode;
+    m_albedoTintMaskedByAlpha = mode == REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA;
   }
 
   void D3D9Rtx::triggerInjectRTX() {

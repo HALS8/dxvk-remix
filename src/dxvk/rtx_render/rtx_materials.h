@@ -279,7 +279,8 @@ struct RtSurface {
     textureFlags |= ((static_cast<uint32_t>(textureAlphaOperation)  & 0x7) << 11);
 
     textureFlags |= eyeParams ? (1 << 14) : 0;
-    // textureFlags bits 15-16 unused
+    textureFlags |= isAlbedoTintMaskedByAlpha ? (1 << 15) : 0;
+    // textureFlags bit 16 unused
 
     static_assert(static_cast<uint32_t>(TexGenMode::Count) <= 4);
     textureFlags |= ((static_cast<uint32_t>(texgenMode) & 0x3) << 17);
@@ -340,6 +341,8 @@ struct RtSurface {
   bool isAnimatedWater = false;
   bool isClipPlaneEnabled = false;
   bool isTextureFactorBlend = false;
+  // Albedo is multiplied by lerp(tFactor.rgb, 1, albedo alpha), and that alpha is not opacity.
+  bool isAlbedoTintMaskedByAlpha = false;
   bool isVertexColorBakedLighting = true;
   // isDecalCategory (fork — 2026-06-18) removed 2026-06-19 with the cloud-shadow
   // zenith gate that consumed it.
@@ -411,6 +414,7 @@ struct RtSurface {
       "  isAnimatedWater: ", isAnimatedWater, "\n",
       "  isClipPlaneEnabled: ", isClipPlaneEnabled, "\n",
       "  isTextureFactorBlend: ", isTextureFactorBlend, "\n",
+      "  isAlbedoTintMaskedByAlpha: ", isAlbedoTintMaskedByAlpha, "\n",
       "  isMotionBlurMaskOut: ", isMotionBlurMaskOut, "\n",
       "  skipSurfaceInteractionSpritesheetAdjustment: ", skipSurfaceInteractionSpritesheetAdjustment));
     
@@ -1937,6 +1941,8 @@ struct LegacyMaterialData {
   uint32_t tFactor = 0xffffffff;  // Value for D3DRS_TEXTUREFACTOR, default value of is opaque white
   D3DMATERIAL9 d3dMaterial = {};
   bool isTextureFactorBlend = false;
+  // Set from REMIXAPI_D3D9_RS_ALBEDO_TINT, see remix_c.h.
+  bool isAlbedoTintMaskedByAlpha = false;
   bool isVertexColorBakedLighting = true;
 
   void setHashOverride(XXH64_hash_t hash) {
