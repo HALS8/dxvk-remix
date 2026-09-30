@@ -1311,6 +1311,8 @@ namespace dxvk {
     m_hasInitializedMaterialDataThisFrame = false;
     m_cascadeCompositionChangedThisFrame = false;
 
+    flushLayoutChangeReport();
+
     m_numDrawsBakedLastFrame = m_numDrawsBakedThisFrame;
     m_numDrawsReusedLastFrame = m_numDrawsReusedThisFrame;
     m_numDrawsBakedThisFrame = 0;
@@ -1443,42 +1445,72 @@ namespace dxvk {
   }
 
   // Everything that decides where a world position lands in the cascade map, and what a baked
-  // height value means. Texels baked under one layout are meaningless under another.
-  XXH64_hash_t TerrainBaker::calculateBakedLayoutHash() const {
-    auto combine = [](XXH64_hash_t hash, const void* data, size_t size) {
-      return XXH64(data, size, hash);
-    };
+  // height value means. Texels baked under one layout are meaningless under another. Hashed per
+  // part so that a layout change can be attributed.
+  TerrainBaker::LayoutHashes TerrainBaker::calculateBakedLayoutHashes() const {
+    LayoutHashes parts;
+    parts[LayoutPart::SceneView] = XXH64(&m_bakingParams.sceneView, sizeof(m_bakingParams.sceneView), 0);
+    parts[LayoutPart::TopDownProjection] = XXH64(m_bakingParams.bakingCameraOrthoProjection.data(),
+                                                 m_bakingParams.bakingCameraOrthoProjection.size() * sizeof(Matrix4), 0);
+    const VkExtent2D resolutions[] = { m_bakingParams.cascadeMapResolution, m_bakingParams.cascadeLevelResolution };
+    parts[LayoutPart::Resolution] = XXH64(resolutions, sizeof(resolutions), 0);
 
-    XXH64_hash_t hash = XXH64(&m_bakingParams.sceneView, sizeof(m_bakingParams.sceneView), 0);
-    hash = combine(hash, m_bakingParams.bakingCameraOrthoProjection.data(),
-                   m_bakingParams.bakingCameraOrthoProjection.size() * sizeof(Matrix4));
-    hash = combine(hash, &m_bakingParams.cascadeMapResolution, sizeof(m_bakingParams.cascadeMapResolution));
-    hash = combine(hash, &m_bakingParams.cascadeLevelResolution, sizeof(m_bakingParams.cascadeLevelResolution));
-    hash = combine(hash, m_bakingParams.sideProjectionView.data(), m_bakingParams.sideProjectionView.size() * sizeof(Matrix4));
-    hash = combine(hash, m_bakingParams.sideProjectionOrthoProjection.data(),
-                   m_bakingParams.sideProjectionOrthoProjection.size() * sizeof(Matrix4));
+    XXH64_hash_t sideProjections = XXH64(m_bakingParams.sideProjectionView.data(), m_bakingParams.sideProjectionView.size() * sizeof(Matrix4), 0);
+    sideProjections = XXH64(m_bakingParams.sideProjectionOrthoProjection.data(),
+                            m_bakingParams.sideProjectionOrthoProjection.size() * sizeof(Matrix4), sideProjections);
     const TerrainSideProjectionCulling sideProjectionCulling = cascadeMap.sideProjectionCulling();
-    hash = combine(hash, &sideProjectionCulling, sizeof(sideProjectionCulling));
+    parts[LayoutPart::SideProjections] = XXH64(&sideProjectionCulling, sizeof(sideProjectionCulling), sideProjections);
 
     const float displacement[] = { m_prevFrameMaxDisplaceIn, m_prevFrameMaxDisplaceOut, Material::Properties::displaceInFactor() };
-    hash = combine(hash, displacement, sizeof(displacement));
+    parts[LayoutPart::Displacement] = XXH64(displacement, sizeof(displacement), 0);
 
     const bool materialOptions[] = {
       Material::bakeReplacementMaterials(), Material::bakeSecondaryPBRTextures(), Material::bakeMaterialConstants(),
       Material::replacementSupportInPS() };
-    hash = combine(hash, materialOptions, sizeof(materialOptions));
+    parts[LayoutPart::MaterialOptions] = XXH64(materialOptions, sizeof(materialOptions), 0);
 
-    return hash;
+    return parts;
+  }
+
+  // Counts which parts of the layout invalidated the cascade, reported once per logging window,
+  // since a cascade discarded every frame shows only as a baked count that never drops.
+  void TerrainBaker::reportLayoutChanges(const LayoutHashes& layout) {
+    if (!logLayoutChanges()) {
+      return;
+    }
+    for (uint32_t i = 0; i < LayoutPart::Count; i++) {
+      m_layoutChangeCounts[i] += m_bakedLayout[i] != layout[i] ? 1 : 0;
+    }
+    ++m_layoutChanges;
+  }
+
+  void TerrainBaker::flushLayoutChangeReport() {
+    constexpr uint32_t kReportFrames = 600;
+    if (!logLayoutChanges() || ++m_framesSinceLayoutReport < kReportFrames) {
+      return;
+    }
+    Logger::info(str::format("[RTX Terrain Baker] over ", kReportFrames, " frames: cascade discarded ", m_layoutChanges,
+                             " times | scene view ", m_layoutChangeCounts[LayoutPart::SceneView],
+                             ", top-down projection ", m_layoutChangeCounts[LayoutPart::TopDownProjection],
+                             ", resolution ", m_layoutChangeCounts[LayoutPart::Resolution],
+                             ", side projections ", m_layoutChangeCounts[LayoutPart::SideProjections],
+                             ", displacement ", m_layoutChangeCounts[LayoutPart::Displacement],
+                             " (now in ", m_prevFrameMaxDisplaceIn, " out ", m_prevFrameMaxDisplaceOut, ")",
+                             ", material options ", m_layoutChangeCounts[LayoutPart::MaterialOptions],
+                             " | per frame baked ", m_numDrawsBakedLastFrame, " reused ", m_numDrawsReusedLastFrame));
+    m_framesSinceLayoutReport = 0;
+    m_layoutChanges = 0;
+    m_layoutChangeCounts = {};
   }
 
   // Starts the frame's baking: either from scratch, when the layout changed or the textures lost
   // their contents, or on top of what earlier frames baked.
   void TerrainBaker::beginBakedContent(Rc<RtxContext> ctx) {
-    const XXH64_hash_t layoutHash = calculateBakedLayoutHash();
+    const LayoutHashes layout = calculateBakedLayoutHashes();
     const bool texturesLost =
       m_bakedContentLost || !m_materialTextures[ReplacementMaterialTextureType::AlbedoOpacity].texture.isValid();
 
-    if (layoutHash == m_bakedLayoutHash && !texturesLost) {
+    if (layout == m_bakedLayout && !texturesLost) {
       // Draw calls reusing their texels do not rebake, so they would not mark the textures they
       // wrote to as baked. Every texture holding valid texels stays bound instead.
       for (BakedTexture& texture : m_materialTextures) {
@@ -1489,7 +1521,8 @@ namespace dxvk {
       return;
     }
 
-    m_bakedLayoutHash = layoutHash;
+    reportLayoutChanges(layout);
+    m_bakedLayout = layout;
     m_bakedDraws.clear();
     m_bakedContentLost = false;
 

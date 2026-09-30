@@ -85,6 +85,7 @@ namespace dxvk {
                                                               "Requirement: the baked terrain surfaces must not be placed vertically in the game world. Horizontal surfaces will have the best image quality. Requires \"rtx.zUp\" to be set properly.");
 
     RTX_OPTION("rtx.terrainBaker", bool, clearTerrainBeforeBaking, false, "Clears the terrain textures before the cascade map is baked from scratch, i.e. whenever it is recentered or its layout changes.");
+    RTX_OPTION("rtx.terrainBaker", bool, logLayoutChanges, false, "Logs, every 600 frames, how often the cascade map was discarded and which part of its layout changed.");
     RTX_OPTION("rtx.terrainBaker", bool, debugDisableBaking , false, "Force disables rebaking every frame. Used for debugging only.")
     RTX_OPTION("rtx.terrainBaker", bool, logSurfaceOrientation, false,
                "Diagnostic. Logs how each baked terrain draw call is oriented, once per distinct geometry.\n"
@@ -242,7 +243,13 @@ namespace dxvk {
     void calculateTerrainBBOX(const uint32_t currentFrameIndex);
     void calculateBakingParameters(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);
     void updateCascadeCenter(const RtCamera& camera);
-    XXH64_hash_t calculateBakedLayoutHash() const;
+    struct LayoutPart {
+      enum Enum : uint32_t { SceneView, TopDownProjection, Resolution, SideProjections, Displacement, MaterialOptions, Count };
+    };
+    using LayoutHashes = std::array<XXH64_hash_t, LayoutPart::Count>;
+    LayoutHashes calculateBakedLayoutHashes() const;
+    void reportLayoutChanges(const LayoutHashes& layout);
+    void flushLayoutChangeReport();
     void beginBakedContent(Rc<RtxContext> ctx);
     static XXH64_hash_t calculateDrawKey(const DrawCallState& drawCallState, const OpaqueMaterialData* replacementMaterial,
                                          const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
@@ -280,7 +287,10 @@ namespace dxvk {
     // The cascade layout the baked texels were rendered for, and the draw calls already baked
     // into it. A draw call whose key is in the set has nothing new to write and is not baked
     // again. Both reset whenever the layout changes, which rebakes everything.
-    XXH64_hash_t m_bakedLayoutHash = kEmptyHash;
+    LayoutHashes m_bakedLayout {};
+    std::array<uint32_t, LayoutPart::Count> m_layoutChangeCounts {};
+    uint32_t m_layoutChanges = 0;
+    uint32_t m_framesSinceLayoutReport = 0;
     std::unordered_set<XXH64_hash_t> m_bakedDraws;
 
     // A newly created terrain texture holds only its clear value, including where draw calls
