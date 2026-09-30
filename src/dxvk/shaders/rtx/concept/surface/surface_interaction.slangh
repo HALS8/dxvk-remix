@@ -209,22 +209,31 @@ uint selectTerrainProjection(vec3 facingNormal, float noise)
 
 // Replaces a baked terrain surface's top-down texcoords with a side projection's when the surface
 // faces a side projection more than the top-down one, lies within the side projected levels, and is
-// the surface that projection holds at its texel. Returns false, leaving the texcoords untouched,
+// the surface that projection holds at its texel. Returns kTerrainSideProjectionUsed if so, and otherwise leaves the texcoords untouched
 // whenever the top-down cascade map has to be used instead.
-bool applyTerrainSideProjection(
+// Outcome of applyTerrainSideProjection, shown by the cascade level debug view as 10 + the outcome
+static const uint kTerrainSideProjectionUsed = 0;
+static const uint kTerrainSideProjectionNoLevels = 1;
+static const uint kTerrainSideProjectionTopDownFaced = 2;
+static const uint kTerrainSideProjectionBeyondLevels = 3;
+static const uint kTerrainSideProjectionOutsideView = 4;
+static const uint kTerrainSideProjectionDepthEmpty = 5;
+static const uint kTerrainSideProjectionDepthMismatch = 6;
+
+uint applyTerrainSideProjection(
   vec3 position, vec3 facingNormal, vec3 worldPositions[3], uint frameIdx,
   inout vec2 interpolatedTexcoord, inout vec2 texcoords[3])
 {
   if (cb.terrainArgs.numSideProjectionLevels == 0)
   {
-    return false;
+    return kTerrainSideProjectionNoLevels;
   }
 
   const float noise = cascadeTransitionNoise(position, frameIdx);
   const uint view = selectTerrainProjection(facingNormal, noise);
   if (view == kNumTerrainSideProjectionViews)
   {
-    return false;
+    return kTerrainSideProjectionTopDownFaced;
   }
 
   // A level's views cover a cube around the map's centre, and the camera may be up to the recenter
@@ -245,7 +254,7 @@ bool applyTerrainSideProjection(
 
   if (level >= cb.terrainArgs.numSideProjectionLevels)
   {
-    return false;
+    return kTerrainSideProjectionBeyondLevels;
   }
 
   const uint sideView = level * kNumTerrainSideProjectionViews + view;
@@ -254,7 +263,7 @@ bool applyTerrainSideProjection(
 
   if (any(projected.xy < 0.0) || any(projected.xy > 1.0))
   {
-    return false;
+    return kTerrainSideProjectionOutsideView;
   }
 
   const vec2 tiledTexcoord = convertSideProjectionTexCoordToTiledTexCoord(sideView, projected.xy);
@@ -265,7 +274,7 @@ bool applyTerrainSideProjection(
   const float bakedDepth = textures[nonuniformEXT(cb.terrainArgs.sideProjectionDepthTextureIndex)].Load(ivec3(texel, 0)).r;
   if (bakedDepth >= 1.0)
   {
-    return false;
+    return kTerrainSideProjectionDepthEmpty;
   }
 
   const float levelScale = float(1u << level);
@@ -275,7 +284,7 @@ bool applyTerrainSideProjection(
                           cb.terrainArgs.sideProjectionLevelTexelSize * levelScale * slopeAcrossTexel;
   if (abs(projected.z - bakedDepth) * cb.terrainArgs.sideProjectionLevelDepthRange * levelScale > tolerance)
   {
-    return false;
+    return kTerrainSideProjectionDepthMismatch;
   }
 
   interpolatedTexcoord = tiledTexcoord;
@@ -286,7 +295,7 @@ bool applyTerrainSideProjection(
     texcoords[i] = convertSideProjectionTexCoordToTiledTexCoord(sideView, mul(worldToTexture, vec4(worldPositions[i], 1.0)).xy);
   }
 
-  return true;
+  return kTerrainSideProjectionUsed;
 }
 
 vec3 calcShadowTerminatorOffset(
@@ -709,10 +718,12 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
     surfaceInteraction.textureCoordinates = sanitizedInterpolatedTextureCoordinates;
 
     // Chosen before the tangent frame is generated, since a side projection's texture axes differ from the top-down map's
-    const bool usesTerrainSideProjection =
-      surface.texcoordGenerationMode == uint(TexGenMode::CascadedViewPositions) &&
-      applyTerrainSideProjection(hitPosition, flippedTriangleNormal, worldPositions, cb.frameIdx,
-                                 surfaceInteraction.textureCoordinates, texcoords);
+    const uint terrainSideProjection =
+      surface.texcoordGenerationMode == uint(TexGenMode::CascadedViewPositions)
+      ? applyTerrainSideProjection(hitPosition, flippedTriangleNormal, worldPositions, cb.frameIdx,
+                                   surfaceInteraction.textureCoordinates, texcoords)
+      : kTerrainSideProjectionNoLevels;
+    const bool usesTerrainSideProjection = terrainSideProjection == kTerrainSideProjectionUsed;
 
     if (GenerateTangents)
     {
@@ -769,7 +780,9 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
 #if defined(RAY_TRACING_PRIMARY_RAY)
       if (cb.debugView == DEBUG_VIEW_CASCADE_LEVEL)
       {
-        storeInDebugView(getDispatchRaysIndex().xy, cascadeLevel);
+        const bool sideProjectionConsidered = terrainSideProjection != kTerrainSideProjectionTopDownFaced &&
+                                              terrainSideProjection != kTerrainSideProjectionNoLevels;
+        storeInDebugView(getDispatchRaysIndex().xy, sideProjectionConsidered ? 10 + terrainSideProjection : cascadeLevel);
       }
       else if (cb.debugView == DEBUG_VIEW_IS_BAKED_TERRAIN)
       {
@@ -777,6 +790,13 @@ SurfaceInteraction surfaceInteractionCreate<let GenerateTangents : bool>(
       }
 #endif
     }
+
+#if defined(RAY_TRACING_PRIMARY_RAY)
+    if (usesTerrainSideProjection && cb.debugView == DEBUG_VIEW_CASCADE_LEVEL)
+    {
+      storeInDebugView(getDispatchRaysIndex().xy, 10 + kTerrainSideProjectionUsed);
+    }
+#endif
 
     // Compute texture gradients
     // Note: This is done here as it depends on the triangle normal and texture coordinates being calculated first

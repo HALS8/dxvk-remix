@@ -1251,6 +1251,7 @@ namespace dxvk {
           ImGui::Text("Draw Calls Baked / Reused Last Frame: %u / %u", m_numDrawsBakedLastFrame, m_numDrawsReusedLastFrame);
           ImGui::Text("Side Projection Levels: %u%s", m_bakingParams.numSideProjectionLevels,
                       m_sideProjectionsNeeded ? "" : " (no terrain has needed them yet)");
+          ImGui::Text("Side Projection Depth Texture Index: %u", m_sideProjectionDepthTextureIndex);
         
           ImGui::Unindent();
         }
