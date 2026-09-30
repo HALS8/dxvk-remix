@@ -1025,8 +1025,48 @@ namespace dxvk {
     return std::sqrtf(maxUvTileSizeSqr);
   }
 
-  void RtxGeometryUtils::dispatchSmoothNormals(const Rc<DxvkContext>& ctx, const RasterGeometry& input, RaytraceGeometry& geo) {
+  // Runs every queued mesh's smoothing as three passes -- clear all hash tables, accumulate every
+  // mesh's triangles, scatter every mesh's vertices -- instead of clear/accumulate/scatter per mesh.
+  // Each mesh touches only its own buffers and its own hash table slice, so barriers are needed
+  // only between the passes; issued mesh by mesh, every mesh paid for three of its own, and an
+  // animated scene rebuilds hundreds of meshes a frame.
+  void RtxGeometryUtils::flushSmoothNormals(const Rc<DxvkContext>& ctx) {
+    if (m_pendingSmoothNormals.empty()) {
+      return;
+    }
     ScopedGpuProfileZone(ctx, "smoothNormals");
+
+    for (PendingSmoothNormals& job : m_pendingSmoothNormals) {
+      const VkDeviceSize hashBufSize = job.params.hashTableSize * 4 * sizeof(int);
+      job.hashTable = m_pSmoothNormalsHashData->alloc(16, hashBufSize);
+      ctx->clearBuffer(job.hashTable.buffer(), job.hashTable.offset(), hashBufSize, 0);
+    }
+
+    ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, SmoothNormalsShader::getShader());
+    ctx->setPushConstantBank(DxvkPushConstantBank::RTX);
+
+    // Phase 1: accumulate area-weighted face normals into each mesh's hash table by position.
+    // Phase 2: each vertex reads its smoothed normal back, normalizes it and writes it encoded.
+    for (const uint32_t phase : { 1u, 2u }) {
+      for (PendingSmoothNormals& job : m_pendingSmoothNormals) {
+        ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_POSITION_RO, job.positionBuffer);
+        ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_NORMAL_RW, job.normalBuffer);
+        ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_INDEX_INPUT, job.indexBuffer);
+        ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_HASH_TABLE, job.hashTable);
+
+        job.params.phase = phase;
+        ctx->pushConstants(0, sizeof(SmoothNormalsArgs), &job.params);
+
+        const uint32_t threads = phase == 1 ? job.params.numTriangles : job.params.numVertices;
+        const VkExtent3D workgroups = util::computeBlockCount(VkExtent3D { threads, 1, 1 }, VkExtent3D { 128, 1, 1 });
+        ctx->dispatch(workgroups.width, workgroups.height, workgroups.depth);
+      }
+    }
+
+    m_pendingSmoothNormals.clear();
+  }
+
+  void RtxGeometryUtils::dispatchSmoothNormals(const Rc<DxvkContext>& ctx, const RasterGeometry& input, RaytraceGeometry& geo) {
 
     if (!geo.positionBuffer.defined() || !geo.indexBuffer.defined() || !geo.normalBuffer.defined()) {
       ONCE(Logger::warn("dispatchSmoothNormals: geometry missing required buffers (position, index, or normal)"));
@@ -1099,40 +1139,18 @@ namespace dxvk {
         ctx->writeToBuffer(geo.normalBuffer.buffer(), geo.normalBuffer.offsetFromSlice() + v * geo.normalBuffer.stride(), sizeof(dstNormal),  &dstNormal);
       }
     } else {
-      // --- GPU path ---
+      // --- GPU path: queued, and run with the frame's other meshes in flushSmoothNormals ---
       params.positionOffset = geo.positionBuffer.offsetFromSlice();
       params.positionStride = geo.positionBuffer.stride();
       params.normalOffset = geo.normalBuffer.offsetFromSlice();
       params.normalStride = geo.normalBuffer.stride();
       params.indexOffset = geo.indexBuffer.offsetFromSlice();
 
-      // Sub-allocate from a pooled device-local buffer for the hash table (4 ints per entry: tag + 3 normal components)
-      const VkDeviceSize hashBufSize = hashTableSize * 4 * sizeof(int);
-      DxvkBufferSlice hashTableSlice = m_pSmoothNormalsHashData->alloc(16, hashBufSize);
-
-      ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_POSITION_RO, DxvkBufferSlice(geo.positionBuffer.buffer()));
-      ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_NORMAL_RW, DxvkBufferSlice(geo.normalBuffer.buffer()));
-      ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_INDEX_INPUT, DxvkBufferSlice(geo.indexBuffer.buffer()));
-      ctx->bindResourceBuffer(SMOOTH_NORMALS_BINDING_HASH_TABLE, hashTableSlice);
-
-      ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, SmoothNormalsShader::getShader());
-      ctx->setPushConstantBank(DxvkPushConstantBank::RTX);
-
-      const VkExtent3D vertexWorkgroups = util::computeBlockCount(VkExtent3D { params.numVertices, 1, 1 }, VkExtent3D { 128, 1, 1 });
-      const VkExtent3D triangleWorkgroups = util::computeBlockCount(VkExtent3D { params.numTriangles, 1, 1 }, VkExtent3D { 128, 1, 1 });
-
-      // Clear the hash table slice to zero using vkCmdFillBuffer
-      ctx->clearBuffer(hashTableSlice.buffer(), hashTableSlice.offset(), hashBufSize, 0);
-
-      // Phase 1: Accumulate area-weighted face normals into hash table by position
-      params.phase = 1;
-      ctx->pushConstants(0, sizeof(SmoothNormalsArgs), &params);
-      ctx->dispatch(triangleWorkgroups.width, triangleWorkgroups.height, triangleWorkgroups.depth);
-
-      // Phase 2: Each vertex reads its smoothed normal from hash table, normalizes, writes encoded output
-      params.phase = 2;
-      ctx->pushConstants(0, sizeof(SmoothNormalsArgs), &params);
-      ctx->dispatch(vertexWorkgroups.width, vertexWorkgroups.height, vertexWorkgroups.depth);
+      PendingSmoothNormals& job = m_pendingSmoothNormals.emplace_back();
+      job.params = params;
+      job.positionBuffer = DxvkBufferSlice(geo.positionBuffer.buffer());
+      job.normalBuffer = DxvkBufferSlice(geo.normalBuffer.buffer());
+      job.indexBuffer = DxvkBufferSlice(geo.indexBuffer.buffer());
     }
 
     // Smooth normals always outputs octahedral-encoded normals (single R32_UINT per vertex).

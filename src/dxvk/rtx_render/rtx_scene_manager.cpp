@@ -740,6 +740,9 @@ namespace dxvk {
   void SceneManager::onFrameEnd(Rc<DxvkContext> ctx, bool raytracedThisFrame) {
     ScopedCpuProfileZone();
 
+    // A frame that was not raytraced never built its scene, so nothing flushed the smoothing it queued
+    m_device->getCommon()->metaGeometryUtils().flushSmoothNormals(ctx);
+
     // Commit this frame's texture registrations for preserve next frame. Must run before
     // manageTextureVram(), which may clear the cache and bump the generation so the
     // following frame takes the dynamic path for every draw call.
@@ -1766,6 +1769,8 @@ namespace dxvk {
     if (drawCallState.getSkinningState().numBones > 0 &&
         drawCallState.getGeometryData().numBonesPerVertex > 0 &&
         (result == ObjectCacheState::KBuildBVH || result == ObjectCacheState::kUpdateBVH)) {
+      // Skinning writes the normals too, and must land after any smoothing queued for them
+      m_device->getCommon()->metaGeometryUtils().flushSmoothNormals(ctx);
       m_device->getCommon()->metaGeometryUtils().dispatchSkinning(drawCallState, pBlas->modifiedGeometryData);
       pBlas->frameLastUpdated = pBlas->frameLastTouched;
       m_instanceManager.notifySceneChanged();
@@ -2424,6 +2429,9 @@ namespace dxvk {
 
   void SceneManager::prepareSceneData(Rc<RtxContext> ctx, DxvkBarrierSet& execBarriers) {
     ScopedGpuProfileZone(ctx, "Build Scene");
+
+    // Before garbage collection can release a queued mesh's buffers, and before anything reads its normals
+    m_device->getCommon()->metaGeometryUtils().flushSmoothNormals(ctx);
 
   #ifdef REMIX_DEVELOPMENT
     if (m_device->getCurrentFrameId() == RtxOptions::dumpAllInstancesOnFrame()) {

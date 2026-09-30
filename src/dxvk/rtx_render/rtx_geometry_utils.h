@@ -28,6 +28,7 @@
 #include "../util/util_matrix.h"
 #include "rtx/pass/gen_tri_list_index_buffer_indices.h"
 #include "rtx/pass/terrain_baking/decode_and_add_opacity_binding_indices.h"
+#include "rtx/pass/smooth_normals_binding_indices.h"
 #include "rtx_types.h"
 #include "rtx_common_object.h"
 #include "rtx_staging.h"
@@ -49,6 +50,16 @@ namespace dxvk {
   class RtxGeometryUtils : public CommonDeviceObject {
     std::unique_ptr<RtxStagingDataAlloc> m_pCbData;
     std::unique_ptr<RtxStagingDataAlloc> m_pSmoothNormalsHashData;
+
+    // Smoothing queued by dispatchSmoothNormals, run together by flushSmoothNormals
+    struct PendingSmoothNormals {
+      SmoothNormalsArgs params;
+      DxvkBufferSlice positionBuffer;
+      DxvkBufferSlice normalBuffer;
+      DxvkBufferSlice indexBuffer;
+      DxvkBufferSlice hashTable;
+    };
+    std::vector<PendingSmoothNormals> m_pendingSmoothNormals;
     Rc<DxvkContext> m_skinningContext;
     uint32_t m_skinningCommands = 0;
 
@@ -192,11 +203,19 @@ namespace dxvk {
       * the geometry's normal buffer.
       *
       * Requires valid position, index, and normal buffers in the geometry.
+      *
+      * Small meshes are smoothed on the CPU immediately. Others are queued: their normals are
+      * written by the next flushSmoothNormals, which must run before anything reads them.
       */
     void dispatchSmoothNormals(
       const Rc<DxvkContext>& ctx,
       const RasterGeometry& input,
       RaytraceGeometry& geo);
+
+    /**
+      * \brief Runs the smoothing queued by dispatchSmoothNormals since the last flush
+      */
+    void flushSmoothNormals(const Rc<DxvkContext>& ctx);
 
     inline void flushCommandList() {
       if (m_skinningContext->getCommandList() != nullptr && m_skinningCommands > 0) {
