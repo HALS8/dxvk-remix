@@ -259,7 +259,7 @@ namespace dxvk {
     static DrawKeyParts calculateDrawKeyParts(const DrawCallState& drawCallState, const OpaqueMaterialData* replacementMaterial,
                                               const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
                                               const D3D9SharedPS& sharedPS);
-    void reportDrawKeyChanges(const DrawKeyParts& parts);
+    void reportDrawKeyChanges(const DrawKeyParts& parts, const D3D9FixedFunctionVS* fixedFunctionVS);
     void accountDisplacement(const OpaqueMaterialData& replacementMaterial);
 
     // Triangle counts of a terrain geometry by which projection represents them best. Upward and
@@ -301,6 +301,11 @@ namespace dxvk {
     std::vector<DrawKeyParts> m_drawKeysLastFrame;
     std::array<uint32_t, DrawKeyPart::Count> m_drawKeyChangeCounts {};
     uint32_t m_drawKeysCompared = 0;
+    using TexcoordMatrices = std::array<Matrix4, 8>;
+    std::vector<TexcoordMatrices> m_texcoordMatricesThisFrame;
+    std::vector<TexcoordMatrices> m_texcoordMatricesLastFrame;
+    std::array<uint32_t, 8> m_texcoordMatrixChangeCounts {};
+    std::string m_texcoordMatrixSample;
     std::unordered_set<XXH64_hash_t> m_bakedDraws;
 
     // A newly created terrain texture holds only its clear value, including where draw calls

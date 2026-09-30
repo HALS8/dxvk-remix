@@ -431,18 +431,31 @@ namespace dxvk {
 
   // Compares each draw call's key with the key of the draw call submitted at the same position on
   // the previous frame: a key that changes every frame rebakes every draw although the cascade survives.
-  void TerrainBaker::reportDrawKeyChanges(const DrawKeyParts& parts) {
+  void TerrainBaker::reportDrawKeyChanges(const DrawKeyParts& parts, const D3D9FixedFunctionVS* fixedFunctionVS) {
     if (!logLayoutChanges()) {
       return;
     }
     const size_t index = m_drawKeysThisFrame.size();
     m_drawKeysThisFrame.push_back(parts);
+    m_texcoordMatricesThisFrame.push_back(fixedFunctionVS ? fixedFunctionVS->TexcoordMatrices : TexcoordMatrices {});
     if (index >= m_drawKeysLastFrame.size()) {
       return;
     }
     ++m_drawKeysCompared;
     for (uint32_t i = 0; i < DrawKeyPart::Count; i++) {
       m_drawKeyChangeCounts[i] += m_drawKeysLastFrame[index][i] != parts[i] ? 1 : 0;
+    }
+
+    const TexcoordMatrices& previous = m_texcoordMatricesLastFrame[index];
+    const TexcoordMatrices& current = m_texcoordMatricesThisFrame.back();
+    for (uint32_t stage = 0; stage < current.size(); stage++) {
+      if (memcmp(&previous[stage], &current[stage], sizeof(Matrix4)) == 0) {
+        continue;
+      }
+      ++m_texcoordMatrixChangeCounts[stage];
+      if (m_texcoordMatrixSample.empty()) {
+        m_texcoordMatrixSample = str::format("stage ", stage, " was ", previous[stage], " now ", current[stage]);
+      }
     }
   }
 
@@ -691,7 +704,7 @@ namespace dxvk {
                                                             drawCallState.usesVertexShader ? nullptr : &prevCB.fixedFunction,
                                                             prevSharedState);
     const XXH64_hash_t drawKey = XXH64(drawKeyParts.data(), sizeof(drawKeyParts), 0);
-    reportDrawKeyChanges(drawKeyParts);
+    reportDrawKeyChanges(drawKeyParts, drawCallState.usesVertexShader ? nullptr : &prevCB.fixedFunction);
 
     // Already in the cascade map: the texels this draw call would write are there from an earlier frame.
     if (m_bakedDraws.count(drawKey) != 0) {
@@ -1332,6 +1345,8 @@ namespace dxvk {
     flushLayoutChangeReport();
     m_drawKeysLastFrame.swap(m_drawKeysThisFrame);
     m_drawKeysThisFrame.clear();
+    m_texcoordMatricesLastFrame.swap(m_texcoordMatricesThisFrame);
+    m_texcoordMatricesThisFrame.clear();
 
     m_numDrawsBakedLastFrame = m_numDrawsBakedThisFrame;
     m_numDrawsReusedLastFrame = m_numDrawsReusedThisFrame;
@@ -1525,12 +1540,18 @@ namespace dxvk {
                              ", texcoord matrices ", m_drawKeyChangeCounts[DrawKeyPart::TexcoordMatrices],
                              ", stage constants ", m_drawKeyChangeCounts[DrawKeyPart::StageConstants],
                              ", replacement views ", m_drawKeyChangeCounts[DrawKeyPart::ReplacementTextureViews],
-                             ", replacement constants ", m_drawKeyChangeCounts[DrawKeyPart::ReplacementConstants]));
+                             ", replacement constants ", m_drawKeyChangeCounts[DrawKeyPart::ReplacementConstants],
+                             " | texcoord matrix changes by stage ", m_texcoordMatrixChangeCounts[0], " ", m_texcoordMatrixChangeCounts[1], " ",
+                             m_texcoordMatrixChangeCounts[2], " ", m_texcoordMatrixChangeCounts[3], " ", m_texcoordMatrixChangeCounts[4], " ",
+                             m_texcoordMatrixChangeCounts[5], " ", m_texcoordMatrixChangeCounts[6], " ", m_texcoordMatrixChangeCounts[7],
+                             " | first change: ", m_texcoordMatrixSample));
     m_framesSinceLayoutReport = 0;
     m_layoutChanges = 0;
     m_layoutChangeCounts = {};
     m_drawKeysCompared = 0;
     m_drawKeyChangeCounts = {};
+    m_texcoordMatrixChangeCounts = {};
+    m_texcoordMatrixSample.clear();
   }
 
   // Starts the frame's baking: either from scratch, when the layout changed or the textures lost
