@@ -308,9 +308,10 @@ private:
     KBuildBVH = 2,
     kInvalid = -1
   };
-  // Handles conversion of geometry data coming from a draw call, to the data used by the raytracing backend
+  // Handles conversion of geometry data coming from a draw call, to the data used by the raytracing backend.
+  // `historyTrusted` says whether the entry's previous-frame vertices belong to this draw's mesh.
   template<bool isNew>
-  ObjectCacheState processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas);
+  ObjectCacheState processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted);
 
   // logRebuildReasons: geometry cache events counted while the option is on and logged as
   // per-frame rates at the end of each window of frames.
@@ -320,7 +321,7 @@ private:
   // The cache entry a draw call was paired with, relative to the instance the draw updates.
   enum class Pairing : uint32_t {
     Exact,  // Identical geometry and material.
-    Own,    // The instance's own entry, matched by heuristic.
+    Own,    // The instance's own entry.
     Orphan, // An entry no other instance is linked to, matched by heuristic.
     Stolen, // An entry another instance is linked to, matched by heuristic.
     New,    // A newly allocated entry.
@@ -328,6 +329,7 @@ private:
   };
   enum class HistoryReset : uint32_t {
     VertexLayout, // The vertex buffer size changed, so the previous vertices cannot be kept.
+    CrossOwner,   // The entry was reached neither by an identical match nor as the instance's own.
     Count
   };
   struct MaterialRebuilds {
@@ -393,7 +395,7 @@ private:
   // Called whenever a new BLAS scene object is added to the cache
   ObjectCacheState onSceneObjectAdded(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas);
   // Called whenever a BLAS scene object is updated
-  ObjectCacheState onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas);
+  ObjectCacheState onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted);
   // Called whenever a new instance has been added to the database
   void onInstanceAdded(RtInstance& instance);
   // Called whenever instance metadata is updated

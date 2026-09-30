@@ -399,7 +399,7 @@ namespace dxvk {
   }
 
   template<bool isNew>
-  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
+  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted) {
     ScopedCpuProfileZone();
     ObjectCacheState result = ObjectCacheState::KBuildBVH;
     const RasterGeometry& input = drawCallState.getGeometryData();
@@ -574,6 +574,13 @@ namespace dxvk {
           if (logRebuildReasons()) {
             noteHistoryReset(HistoryReset::VertexLayout);
           }
+        } else if (!historyTrusted) {
+          // The previous vertices belong to whichever draw last used the entry, and a draw that does
+          // not own it would take motion from another mesh.
+          invalidateHistory = true;
+          if (logRebuildReasons()) {
+            noteHistoryReset(HistoryReset::CrossOwner);
+          }
         }
 
         // Use the previous updates vertex data for previous position lookup
@@ -654,6 +661,9 @@ namespace dxvk {
       case DrawCallCache::CacheState::kExact:
         pairing = Pairing::Exact;
         break;
+      case DrawCallCache::CacheState::kOwn:
+        pairing = Pairing::Own;
+        break;
       case DrawCallCache::CacheState::kSimilar:
         pairing = existingInstance != nullptr && existingInstance->getBlas() == &blas ? Pairing::Own :
                   isLinkedToAnotherInstance() ? Pairing::Stolen :
@@ -689,7 +699,7 @@ namespace dxvk {
 
     static constexpr const char* kPairingNames[] = { "exact", "own", "orphan", "stolen", "new" };
     static_assert(std::size(kPairingNames) == static_cast<size_t>(Pairing::Count));
-    static constexpr const char* kHistoryResetNames[] = { "vertexLayout" };
+    static constexpr const char* kHistoryResetNames[] = { "vertexLayout", "crossOwner" };
     static_assert(std::size(kHistoryResetNames) == static_cast<size_t>(HistoryReset::Count));
 
     std::string pairings = "[RTX Geometry] per frame | pairing:";
@@ -1504,7 +1514,7 @@ namespace dxvk {
 
   SceneManager::ObjectCacheState SceneManager::onSceneObjectAdded(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
     // This is a new object.
-    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas);
+    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas, true);
     
     assert(result == ObjectCacheState::KBuildBVH);
 
@@ -1514,14 +1524,14 @@ namespace dxvk {
     return result;
   }
   
-  SceneManager::ObjectCacheState SceneManager::onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
+  SceneManager::ObjectCacheState SceneManager::onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted) {
     if (pBlas->frameLastTouched == m_device->getCurrentFrameId()) {
       pBlas->cacheMaterial(drawCallState.getMaterialData());
       return SceneManager::ObjectCacheState::kUpdateInstance;
     }
 
     // TODO: If mesh is static, no need to do any of the below, just use the existing modifiedGeometryData and set result to kInstanceUpdate.
-    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas);
+    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas, historyTrusted);
 
     // We dont expect to hit the rebuild path here - since this would indicate an index buffer or other topological change, and that *should* trigger a new scene object (since the hash would change)
     assert(result != ObjectCacheState::KBuildBVH);
@@ -1716,12 +1726,17 @@ namespace dxvk {
 
     ObjectCacheState result = ObjectCacheState::kInvalid;
     BlasEntry* pBlas = nullptr;
-    const DrawCallCache::CacheState cacheState = m_drawCallCache.get(drawCallState, &pBlas);
+    const DrawCallCache::CacheState cacheState = m_drawCallCache.get(drawCallState, &pBlas, existingInstance);
     if (logRebuildReasons()) {
       notePairing(cacheState, *pBlas, existingInstance);
     }
     if (cacheState != DrawCallCache::CacheState::kNew) {
-      result = onSceneObjectUpdated(ctx, drawCallState, pBlas);
+      // Under strict pairing only an identical or the instance's own entry holds vertices this draw
+      // may take motion from.
+      const bool historyTrusted = !DrawCallCache::strictCachePairing()
+        || cacheState == DrawCallCache::CacheState::kExact
+        || cacheState == DrawCallCache::CacheState::kOwn;
+      result = onSceneObjectUpdated(ctx, drawCallState, pBlas, historyTrusted);
     } else {
       result = onSceneObjectAdded(ctx, drawCallState, pBlas);
     }
