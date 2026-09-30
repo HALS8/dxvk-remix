@@ -12,6 +12,10 @@ namespace dxvk {
     bool usesKill        = false;
 
     std::vector<DxsoInstructionContext> coissues;
+
+    // NV-DXVK start: every decoded instruction, for dataflow analysis of vertex shaders
+    std::vector<DxsoInstructionContext> instructions;
+    // NV-DXVK end
   };
 
   class DxsoAnalyzer {

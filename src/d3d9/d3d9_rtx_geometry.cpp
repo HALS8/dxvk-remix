@@ -267,17 +267,15 @@ namespace dxvk {
       if (settled.size() != count) {
         return false;
       }
-      uint32_t runBegin = 0;
-      for (const auto& [ignoredBegin, ignoredEnd] : shader.GetHashIgnoredFloatConstants()) {
-        if (ignoredBegin >= count) {
+      for (const auto& [begin, end] : shader.GetHashedFloatConstants()) {
+        if (begin >= count) {
           break;
         }
-        if (!runWithin(settled, runBegin, ignoredBegin)) {
+        if (!runWithin(settled, begin, std::min(end, count))) {
           return false;
         }
-        runBegin = std::min(ignoredEnd, count);
       }
-      return runWithin(settled, runBegin, count);
+      return true;
     };
 
     const auto previous = m_settledVsConstantsLastFrame.find(key);
@@ -379,18 +377,15 @@ namespace dxvk {
           auto& shaderByteCode = pVertexShader->GetBytecode();
           vertexShaderHash = XXH3_64bits(shaderByteCode.data(), shaderByteCode.size());
         }
-        // Hashed as the runs of registers between the shader's ignored ranges, clamped to the ones it reads.
-        // With nothing ignored this is the single pass over every register, bit for bit.
+        // Hashed as the shader's hashed register runs, clamped to the ones it reads. With nothing
+        // left out this is the single pass over every register, bit for bit.
         const uint32_t usedConstants = cb.meta.maxConstIndexF;
-        uint32_t runBegin = 0;
-        for (const auto& [ignoredBegin, ignoredEnd] : pVertexShader->GetHashIgnoredFloatConstants()) {
-          if (ignoredBegin >= usedConstants) {
+        for (const auto& [begin, end] : pVertexShader->GetHashedFloatConstants()) {
+          if (begin >= usedConstants) {
             break;
           }
-          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (ignoredBegin - runBegin) * sizeof(float) * 4, vertexShaderHash);
-          runBegin = std::min(ignoredEnd, usedConstants);
+          vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[begin], (std::min(end, usedConstants) - begin) * sizeof(float) * 4, vertexShaderHash);
         }
-        vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (usedConstants - runBegin) * sizeof(float) * 4, vertexShaderHash);
 
         const bool noteConstants = logChangingVertexShaderConstants() &&
           (logChangingVertexShaderConstantsTextures().empty() ||

@@ -64,6 +64,12 @@ namespace dxvk {
                "constants with the same draw call's on the previous frame, and every 600 frames logs, per constant name, the share of\n"
                "draws whose value changed. A constant that changes for nearly every draw while the scene is static holds camera or\n"
                "time data, and is what keeps static meshes rebuilding.");
+    RTX_OPTION("rtx", bool, vertexShaderHashCapturedOutputsOnly, false,
+               "CPU and GPU cost (shader vertex capture). A shader-captured draw call's geometry hash covers every float constant\n"
+               "its shader reads, so a constant used only for lighting, fog or texture animation rebuilds the mesh whenever it\n"
+               "changes. With this on, each vertex shader is analysed when it is created and only the constants that can reach an\n"
+               "output vertex capture records (position, normal, first texcoord) are hashed. The analysis only errs towards hashing\n"
+               "more. Read when a shader is created, so set it at launch.");
     RTX_OPTION("rtx", float, vertexCaptureConstantTolerance, 0.f,
                "CPU and GPU cost (shader vertex capture). A shader-captured draw call's geometry hash covers the float constants its\n"
                "shader reads, so a mesh whose constants move by a hair each frame -- bones wobbling by a millimetre -- is rebuilt every\n"

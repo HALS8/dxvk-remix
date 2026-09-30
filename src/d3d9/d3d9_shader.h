@@ -74,12 +74,16 @@ namespace dxvk {
     const std::vector<std::string>& GetFloatConstantNames() const { return m_floatConstantNames; }
 
     // Float register ranges, as sorted non-overlapping [begin, end), that the vertex capture
-    // geometry hash leaves out: the constants rtx.vertexShaderHashIgnoredConstantNames names.
-    const std::vector<std::pair<uint32_t, uint32_t>>& GetHashIgnoredFloatConstants() const { return m_hashIgnoredFloatConstants; }
+    // geometry hash covers: every register, less the constants rtx.vertexShaderHashIgnoredConstantNames
+    // names and, with rtx.vertexShaderHashCapturedOutputsOnly, those that reach no captured output.
+    const std::vector<std::pair<uint32_t, uint32_t>>& GetHashedFloatConstants() const { return m_hashedFloatConstants; }
 
   private:
 
     void MapFloatConstantNames(const DxsoCtab& ctab);
+    std::vector<bool> FindCapturedOutputConstants(const DxsoCtab& ctab,
+                                                  const std::vector<DxsoInstructionContext>& code) const;
+    void ChooseHashedFloatConstants(const DxsoCtab& ctab, const std::vector<DxsoInstructionContext>& code);
 
     DxsoIsgn              m_isgn;
     // NV-DXVK start: expose shader outputs for vertex capture
@@ -100,6 +104,7 @@ namespace dxvk {
 
     std::vector<std::string>                   m_floatConstantNames;
     std::vector<std::pair<uint32_t, uint32_t>> m_hashIgnoredFloatConstants;
+    std::vector<std::pair<uint32_t, uint32_t>> m_hashedFloatConstants;
 
   };
 

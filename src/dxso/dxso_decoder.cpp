@@ -194,6 +194,9 @@ namespace dxvk {
     uint32_t tokenLength =
       m_ctx.instruction.tokenLength;
 
+    m_ctx.srcCount = 0;
+    m_ctx.hasDst = false;
+
     switch (m_ctx.instruction.opcode) {
       case DxsoOpcode::If:
       case DxsoOpcode::Ifc:
@@ -208,18 +211,21 @@ namespace dxvk {
 
           sourceIdx++;
         }
+        m_ctx.srcCount = sourceIdx;
         return true;
       }
 
       case DxsoOpcode::Dcl:
         this->decodeDeclaration(iter);
         this->decodeDestinationRegister(iter);
+        m_ctx.hasDst = true;
         return true;
 
       case DxsoOpcode::Def:
       case DxsoOpcode::DefI:
       case DxsoOpcode::DefB:
         this->decodeDestinationRegister(iter);
+        m_ctx.hasDst = true;
         this->decodeDefinition(
           m_ctx.instruction.opcode, iter);
         return true;
@@ -239,6 +245,7 @@ namespace dxvk {
         uint32_t sourceIdx = 0;
         for (uint32_t i = 0; i < tokenLength; i++) {
           if (i == 0) {
+            m_ctx.hasDst = true;
             if (this->decodeDestinationRegister(iter))
               i++;
           }
@@ -254,6 +261,7 @@ namespace dxvk {
             sourceIdx++;
           }
         }
+        m_ctx.srcCount = sourceIdx;
         return true;
       }
 

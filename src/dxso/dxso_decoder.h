@@ -208,6 +208,12 @@ namespace dxvk {
     DxsoDefinition              def;
 
     DxsoDeclaration             dcl;
+
+    // NV-DXVK start: operand bookkeeping for dataflow analysis. `src` keeps stale entries from
+    // earlier instructions beyond srcCount, and control flow instructions write no destination.
+    uint32_t                    srcCount = 0;
+    bool                        hasDst   = false;
+    // NV-DXVK end
   };
 
   class DxsoDecodeContext {

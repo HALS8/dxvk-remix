@@ -48,6 +48,10 @@ namespace dxvk {
       m_analysis->usesDerivatives = true;
 
     m_parentOpcode = ctx.instruction.opcode;
+
+    // NV-DXVK start: every decoded instruction, for dataflow analysis of vertex shaders
+    m_analysis->instructions.push_back(ctx);
+    // NV-DXVK end
   }
 
   void DxsoAnalyzer::finalize(size_t tokenCount) {

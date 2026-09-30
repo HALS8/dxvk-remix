@@ -56,6 +56,138 @@ namespace dxvk {
     m_hashIgnoredFloatConstants = std::move(merged);
   }
 
+  // The float registers a vertex shader can read on the way to an output vertex capture records --
+  // position, normal and first texcoord -- found by walking back from those outputs through every
+  // instruction that writes a register already known to feed them. The walk ignores instruction
+  // order and branches, so it can only ever include too much: a temporary reused for lighting and
+  // for position pulls in both. A constant read with relative addressing (a bone palette) brings in
+  // the whole constant-table entry it indexes, or every register above it when the table names none.
+  std::vector<bool> D3D9CommonShader::FindCapturedOutputConstants(
+      const DxsoCtab& ctab, const std::vector<DxsoInstructionContext>& code) const {
+    const uint32_t registerCount = caps::MaxFloatConstantsVS;
+    std::vector<bool> used(registerCount, false);
+    std::unordered_set<uint64_t> live;
+    const auto key = [](const DxsoRegisterId& id) {
+      return (uint64_t(static_cast<uint32_t>(id.type)) << 32) | id.num;
+    };
+
+    if (m_info.majorVersion() >= 3) {
+      for (const DxsoInstructionContext& ins : code) {
+        const DxsoSemantic& semantic = ins.dcl.semantic;
+        if (ins.instruction.opcode == DxsoOpcode::Dcl && ins.dst.id.type == DxsoRegisterType::Output
+            && (semantic.usage == DxsoUsage::Position || semantic.usage == DxsoUsage::PositionT
+                || semantic.usage == DxsoUsage::Normal
+                || (semantic.usage == DxsoUsage::Texcoord && semantic.usageIndex == 0))) {
+          live.insert(key(ins.dst.id));
+        }
+      }
+    } else {
+      live.insert(key({ DxsoRegisterType::RasterizerOut, RasterOutPosition }));
+      live.insert(key({ DxsoRegisterType::TexcoordOut, 0 }));
+    }
+
+    const auto floatIndex = [](const DxsoRegisterId& id) -> int64_t {
+      switch (id.type) {
+      case DxsoRegisterType::Const:  return id.num;
+      case DxsoRegisterType::Const2: return id.num + 2048;
+      case DxsoRegisterType::Const3: return id.num + 4096;
+      case DxsoRegisterType::Const4: return id.num + 6144;
+      default: return -1;
+      }
+    };
+    const auto markIndexedFrom = [&](uint32_t base) {
+      uint32_t end = registerCount;
+      for (const DxsoCtab::Constant& constant : ctab.m_constantData) {
+        if (constant.registerSet == DxsoCtab::registerSetFloat4 && base >= constant.registerIndex
+            && base < constant.registerIndex + constant.registerCount) {
+          end = constant.registerIndex + constant.registerCount;
+          break;
+        }
+      }
+      for (uint32_t r = base; r < std::min(end, registerCount); ++r) {
+        used[r] = true;
+      }
+    };
+
+    bool grew = true;
+    const auto read = [&](const DxsoRegister& src) {
+      const int64_t f = floatIndex(src.id);
+      if (f >= 0) {
+        if (src.hasRelative) {
+          markIndexedFrom(static_cast<uint32_t>(f));
+        } else if (f < registerCount) {
+          used[f] = true;
+        }
+      } else if (src.id.type != DxsoRegisterType::Input && src.id.type != DxsoRegisterType::ConstInt
+                 && src.id.type != DxsoRegisterType::ConstBool) {
+        grew |= live.insert(key(src.id)).second;
+      }
+      if (src.hasRelative) {
+        grew |= live.insert(key(src.relative.id)).second;
+      }
+    };
+
+    while (grew) {
+      grew = false;
+      for (const DxsoInstructionContext& ins : code) {
+        const DxsoOpcode opcode = ins.instruction.opcode;
+        if (opcode == DxsoOpcode::Dcl || opcode == DxsoOpcode::Def || opcode == DxsoOpcode::DefI
+            || opcode == DxsoOpcode::DefB || opcode == DxsoOpcode::Comment) {
+          continue;
+        }
+        // An instruction with no destination steers control flow, which can decide any output.
+        // A relatively addressed destination may be any output, so it counts as one that feeds.
+        const bool feeds = !ins.hasDst || ins.dst.hasRelative || live.count(key(ins.dst.id)) != 0;
+        if (!feeds) {
+          continue;
+        }
+        for (uint32_t i = 0; i < std::min<uint32_t>(ins.srcCount, DxsoMaxOperandCount); ++i) {
+          read(ins.src[i]);
+        }
+        if (ins.instruction.predicated) {
+          read(ins.pred);
+        }
+      }
+    }
+    return used;
+  }
+
+  void D3D9CommonShader::ChooseHashedFloatConstants(const DxsoCtab& ctab,
+                                                    const std::vector<DxsoInstructionContext>& code) {
+    const uint32_t registerCount = caps::MaxFloatConstantsVS;
+    std::vector<bool> hashed(registerCount, true);
+    for (const auto& [begin, end] : m_hashIgnoredFloatConstants) {
+      std::fill(hashed.begin() + begin, hashed.begin() + std::min(end, registerCount), false);
+    }
+    if (D3D9Rtx::vertexShaderHashCapturedOutputsOnly()) {
+      const std::vector<bool> used = FindCapturedOutputConstants(ctab, code);
+      uint32_t readByShader = 0, feedingOutputs = 0;
+      for (uint32_t r = 0; r < registerCount; ++r) {
+        feedingOutputs += used[r] ? 1 : 0;
+        hashed[r] = hashed[r] && used[r];
+      }
+      for (const DxsoCtab::Constant& constant : ctab.m_constantData) {
+        if (constant.registerSet == DxsoCtab::registerSetFloat4) {
+          readByShader += constant.registerCount;
+        }
+      }
+      Logger::info(str::format("[RTX VS constants] shader ", std::hex, m_bytecodeHash, std::dec, ": ", feedingOutputs,
+                               " float registers reach a captured output, of ", readByShader, " its constant table names"));
+    }
+
+    m_hashedFloatConstants.clear();
+    for (uint32_t r = 0; r < registerCount; ++r) {
+      if (!hashed[r]) {
+        continue;
+      }
+      if (!m_hashedFloatConstants.empty() && m_hashedFloatConstants.back().second == r) {
+        m_hashedFloatConstants.back().second = r + 1;
+      } else {
+        m_hashedFloatConstants.emplace_back(r, r + 1);
+      }
+    }
+  }
+
   D3D9CommonShader::D3D9CommonShader(
             D3D9DeviceEx*         pDevice,
             VkShaderStageFlagBits ShaderStage,
@@ -128,6 +260,7 @@ namespace dxvk {
 
     if (ShaderStage == VK_SHADER_STAGE_VERTEX_BIT) {
       MapFloatConstantNames(pModule->ctab());
+      ChooseHashedFloatConstants(pModule->ctab(), AnalysisInfo.instructions);
     }
 
     m_shaders[0]->setShaderKey(Key);
