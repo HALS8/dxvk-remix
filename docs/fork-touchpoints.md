@@ -4689,6 +4689,39 @@ gated on the option; nothing is formatted per draw.
 
 ---
 
+## Workstream - Strict draw call cache pairing (local - 2026-09-30)
+
+Two matchers pair each draw: the draw call tracker chooses the instance (and its transform history),
+and `DrawCallCache::get` chooses the `BlasEntry` (vertex buffers, vertex history, dynamic BLAS). They
+never consulted each other, and the cache's fuzzy fallback accepts a material-only match at any distance
+(single-entry bucket) or a texcoord-only or material-only match within ~31.6 units (multi-entry bucket,
+because `bestScore` started at the smallest positive float rather than the lowest). It also ignores the
+sky class and whether the entry still belongs to a live instance. A wrong pairing keeps the previous
+user's vertices as the draw's previous-frame vertices, so motion vectors are wrong, and re-points every
+instance still linked to the entry at the new geometry.
+
+`rtx.geometry.strictCachePairing` (default off until validated in a scene; flips pairing and BLAS build
+counts) changes three things, measurable with `rtx.geometry.logRebuildReasons`:
+
+- The draw's own instance is passed into `DrawCallCache::get`; its entry is reused when it is in the
+  bucket, not yet touched this frame, and compatible (`kOwn`), or when it matches exactly.
+- The fuzzy fallback skips entries linked to another live instance, and requires the same sky class and
+  vertex layout, the same material or the same pre-shader positions and bones, and a distance within
+  `rtx.uniqueObjectDistance` in both the single- and multi-entry paths. `bestScore` starts at the lowest
+  float.
+- An entry reached neither exactly nor as the instance's own has its previous-frame vertices replaced by
+  the current ones (`crossOwner` history reset), so motion comes from the instance's transform history.
+
+Off, the cache behaves as before. `CacheState` gains `kOwn`.
+
+- **src/dxvk/rtx_render/rtx_draw_call_cache.h / .cpp** - fork-touchpoint (+95 / -30 LOC). *Option,
+  `kOwn`, `owner` parameter; `isCompatible`, `isLinkedToOtherLiveInstance`, `worldDistanceSqr`.*
+- **src/dxvk/rtx_render/rtx_scene_manager.h / .cpp** - fork-touchpoint (+25 / -5 LOC). *`historyTrusted`
+  through `onSceneObjectUpdated` and `processGeometryInfo`; `HistoryReset::CrossOwner`; `owner` passed to
+  the cache.*
+
+---
+
 ## Workstream - Camera constants out of the vertex shader hash (local - 2026-09-29)
 
 A shader-captured draw call's `VertexShader` hash covered every float constant the shader reads.
