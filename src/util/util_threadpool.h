@@ -22,6 +22,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -283,9 +284,7 @@ namespace dxvk {
     using Queue = AtomicQueue<TaskId, NumTasksPerThread>;
     using QueuePtr = std::unique_ptr<Queue>;
 
-    struct Nop { };
-    using OnAddCondition = std::conditional_t<LowLatency, Nop, dxvk::condition_variable>;
-    using TaskMutex = std::conditional_t<LowLatency, Nop, dxvk::mutex>;
+    using TaskMutex = dxvk::mutex;
 
   public:
     WorkerThreadPool(uint8_t numThreads, const char* workerName = "Nameless Worker Thread") 
@@ -315,7 +314,7 @@ namespace dxvk {
       // Stop all the worker threads
       m_stopWork = true;
 
-      if constexpr (!LowLatency) {
+      {
         std::unique_lock<TaskMutex> lock(m_taskMutex);
         m_condOnAdd.notify_all();
       }
@@ -376,13 +375,40 @@ namespace dxvk {
         }
 
         ++m_numTasks;
+
+        // A low-latency worker that found nothing to do for a while is parked; wake it. The
+        // task count is raised before the parked count is read, and a worker raises the parked
+        // count before re-checking the task count, so one of the two always sees the other.
+        if constexpr (LowLatency) {
+          if (m_numParked.load() > 0) {
+            std::unique_lock<TaskMutex> lock(m_taskMutex);
+            m_condOnAdd.notify_all();
+          }
+        }
       }
 
       return future;
     }
 
   private:
+    // Low-latency workers spin while work keeps arriving, but park once none has arrived for
+    // this long: spinning through the gaps between frames holds a whole core per worker for
+    // the life of the process, and a wake-up within a frame's draw stream is never needed.
+    static constexpr auto kIdleSpinBeforeParking = std::chrono::microseconds(500);
+
+    void parkUntilWork() {
+      std::unique_lock<TaskMutex> lock(m_taskMutex);
+      ++m_numParked;
+      m_condOnAdd.wait(lock, [this] {
+        return m_numTasks > 0 || m_stopWork.load();
+      });
+      --m_numParked;
+    }
+
     void processWork(const uint32_t workerId) {
+      std::chrono::steady_clock::time_point idleSince {};
+      bool idle = false;
+
       while (true) {
         // Using a conditional wait in high-latency mode
         if constexpr (!LowLatency) {
@@ -398,8 +424,10 @@ namespace dxvk {
         }
 
         // Try executing a task from our queue
-        if (executeTask(workerId))
+        if (executeTask(workerId)) {
+          idle = false;
           continue;
+        }
 
         if (WorkStealing) {
           // There's no work to do!
@@ -413,10 +441,23 @@ namespace dxvk {
             }
           }
 
-          // If nothing to steal, yield this thread
-          if (!workStolen && LowLatency) {
-            std::this_thread::yield();
+          if (workStolen) {
+            idle = false;
+            continue;
           }
+        }
+
+        if constexpr (LowLatency) {
+          const auto now = std::chrono::steady_clock::now();
+          if (!idle) {
+            idle = true;
+            idleSince = now;
+          } else if (now - idleSince >= kIdleSpinBeforeParking) {
+            parkUntilWork();
+            idle = false;
+            continue;
+          }
+          std::this_thread::yield();
         }
       }
     }
@@ -455,9 +496,10 @@ namespace dxvk {
 
     std::atomic<bool> m_stopWork = false;
 
-    // Used conditionally to wait for tasks in high-latency mode
+    // Workers wait here for tasks: always in high-latency mode, and once parked in low-latency mode
     TaskMutex m_taskMutex;
-    OnAddCondition m_condOnAdd;
+    dxvk::condition_variable m_condOnAdd;
+    std::atomic_uint32_t m_numParked = 0;
 
     // Used to synchronize intra-thread stealing
     sync::Spinlock m_threadMutex;
