@@ -19,6 +19,7 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <algorithm>
 #include <limits>
 #include <mutex>
 #include <vector>
@@ -398,7 +399,7 @@ namespace dxvk {
   }
 
   template<bool isNew>
-  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
+  SceneManager::ObjectCacheState SceneManager::processGeometryInfo(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted) {
     ScopedCpuProfileZone();
     ObjectCacheState result = ObjectCacheState::KBuildBVH;
     const RasterGeometry& input = drawCallState.getGeometryData();
@@ -510,7 +511,7 @@ namespace dxvk {
     }
 
     if (!isNew && result == ObjectCacheState::kUpdateBVH && logRebuildReasons()) {
-      noteRebuild(drawCallState, *pBlas,
+      noteRebuild(drawCallState,
                   positionsChanged ? RebuildReason::Positions :
                   vertexShaderChanged ? RebuildReason::VertexShader :
                   bonesChanged ? RebuildReason::Bones :
@@ -570,6 +571,16 @@ namespace dxvk {
 
           // Mark this object for realignment
           invalidateHistory = true;
+          if (logRebuildReasons()) {
+            noteHistoryReset(HistoryReset::VertexLayout);
+          }
+        } else if (!historyTrusted) {
+          // The previous vertices belong to whichever draw last used the entry, and a draw that does
+          // not own it would take motion from another mesh.
+          invalidateHistory = true;
+          if (logRebuildReasons()) {
+            noteHistoryReset(HistoryReset::CrossOwner);
+          }
         }
 
         // Use the previous updates vertex data for previous position lookup
@@ -619,44 +630,111 @@ namespace dxvk {
     }
   }
 
-  void SceneManager::noteRebuild(const DrawCallState& drawCallState, const BlasEntry& blas, RebuildReason reason) {
+  void SceneManager::noteRebuild(const DrawCallState& drawCallState, RebuildReason reason) {
     const uint32_t reasonIndex = static_cast<uint32_t>(reason);
-    ++m_rebuildCounts[reasonIndex];
+    ++m_geometryDiagnostics.rebuilds[reasonIndex];
 
-    const XXH64_hash_t material = drawCallState.getMaterialData().getHash();
-    if (!m_loggedRebuilds.insert(material ^ (static_cast<XXH64_hash_t>(reasonIndex) << 56)).second) {
-      return;
+    MaterialRebuilds& material = m_geometryDiagnostics.rebuildsByMaterial[drawCallState.getMaterialData().getHash()];
+    ++material.count;
+    material.reasonMask |= 1u << reasonIndex;
+    material.vertexCount = drawCallState.getGeometryData().vertexCount;
+    material.indexCount = drawCallState.getGeometryData().indexCount;
+    material.numBones = drawCallState.getSkinningState().numBones;
+    material.usesVertexShader = drawCallState.usesVertexShader;
+  }
+
+  void SceneManager::notePairing(DrawCallCache::CacheState cacheState, const BlasEntry& blas, const RtInstance* existingInstance) {
+    const auto isLinkedToAnotherInstance = [&] {
+      for (const RtInstance* linked : blas.getLinkedInstances()) {
+        if (linked != existingInstance && !linked->isMarkedForGC()) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    Pairing pairing = Pairing::New;
+    switch (cacheState) {
+      case DrawCallCache::CacheState::kNew:
+        pairing = Pairing::New;
+        break;
+      case DrawCallCache::CacheState::kExact:
+        pairing = Pairing::Exact;
+        break;
+      case DrawCallCache::CacheState::kOwn:
+        pairing = Pairing::Own;
+        break;
+      case DrawCallCache::CacheState::kSimilar:
+        pairing = existingInstance != nullptr && existingInstance->getBlas() == &blas ? Pairing::Own :
+                  isLinkedToAnotherInstance() ? Pairing::Stolen :
+                  Pairing::Orphan;
+        break;
     }
+    ++m_geometryDiagnostics.pairings[static_cast<uint32_t>(pairing)];
 
-    // A cache entry last used by another material means the draw call cache paired this draw with
-    // a different mesh of the same topology, rather than the geometry itself having changed.
-    const XXH64_hash_t previousMaterial = blas.input.getMaterialData().getHash();
-    const RasterGeometry& geometry = drawCallState.getGeometryData();
-    Logger::info(str::format(
-      "[RTX Geometry] rebuild: material 0x", std::hex, material, std::dec,
-      " reason ", rebuildReasonName(reasonIndex),
-      " | entry last used by ", previousMaterial == material ? "the same material" : "another material",
-      std::hex, " (0x", previousMaterial, ")", std::dec,
-      " | vertices ", geometry.vertexCount, " indices ", geometry.indexCount,
-      " vertexShader ", drawCallState.usesVertexShader ? 1 : 0,
-      " bones ", drawCallState.getSkinningState().numBones,
-      " smoothNormals ", drawCallState.getCategoryFlags().test(InstanceCategories::SmoothNormals) ? 1 : 0));
+    if (existingInstance != nullptr && existingInstance->getBlas() != &blas) {
+      ++m_geometryDiagnostics.relinks;
+    }
+  }
+
+  void SceneManager::noteHistoryReset(HistoryReset reason) {
+    ++m_geometryDiagnostics.historyResets[static_cast<uint32_t>(reason)];
   }
 
   void SceneManager::logRebuildSummary() {
-    constexpr uint32_t kSummaryFrames = 600;
-    if (++m_rebuildSummaryFrames < kSummaryFrames) {
+    constexpr uint32_t kWindowFrames = 600;
+    constexpr size_t kMaterialsListed = 8;
+    GeometryDiagnostics& diagnostics = m_geometryDiagnostics;
+    if (++diagnostics.frames < kWindowFrames) {
       return;
     }
 
-    std::string summary = "[RTX Geometry] rebuilds per frame over the last 600 frames:";
-    for (uint32_t i = 0; i < static_cast<uint32_t>(RebuildReason::Count); ++i) {
-      summary += str::format(" ", rebuildReasonName(i), " ", static_cast<float>(m_rebuildCounts[i]) / kSummaryFrames);
-    }
-    Logger::info(summary);
+    const auto rate = [&](uint64_t count) { return static_cast<float>(count) / kWindowFrames; };
 
-    m_rebuildCounts = {};
-    m_rebuildSummaryFrames = 0;
+    std::string rebuilds = str::format("[RTX Geometry] per frame over ", kWindowFrames, " frames | rebuilds:");
+    for (uint32_t i = 0; i < static_cast<uint32_t>(RebuildReason::Count); ++i) {
+      rebuilds += str::format(" ", rebuildReasonName(i), " ", rate(diagnostics.rebuilds[i]));
+    }
+    Logger::info(rebuilds);
+
+    static constexpr const char* kPairingNames[] = { "exact", "own", "orphan", "stolen", "new" };
+    static_assert(std::size(kPairingNames) == static_cast<size_t>(Pairing::Count));
+    static constexpr const char* kHistoryResetNames[] = { "vertexLayout", "crossOwner" };
+    static_assert(std::size(kHistoryResetNames) == static_cast<size_t>(HistoryReset::Count));
+
+    std::string pairings = "[RTX Geometry] per frame | pairing:";
+    for (uint32_t i = 0; i < static_cast<uint32_t>(Pairing::Count); ++i) {
+      pairings += str::format(" ", kPairingNames[i], " ", rate(diagnostics.pairings[i]));
+    }
+    pairings += str::format(" | relinks ", rate(diagnostics.relinks), " | history resets:");
+    for (uint32_t i = 0; i < static_cast<uint32_t>(HistoryReset::Count); ++i) {
+      pairings += str::format(" ", kHistoryResetNames[i], " ", rate(diagnostics.historyResets[i]));
+    }
+    Logger::info(pairings);
+
+    std::vector<std::pair<XXH64_hash_t, MaterialRebuilds>> materials(
+      diagnostics.rebuildsByMaterial.begin(), diagnostics.rebuildsByMaterial.end());
+    const size_t listed = std::min(materials.size(), kMaterialsListed);
+    std::partial_sort(materials.begin(), materials.begin() + listed, materials.end(),
+      [](const auto& a, const auto& b) { return a.second.count > b.second.count; });
+    Logger::info(str::format("[RTX Geometry] materials rebuilt: ", materials.size(), ", most rebuilt:"));
+    for (size_t i = 0; i < listed; ++i) {
+      const MaterialRebuilds& material = materials[i].second;
+      std::string reasons;
+      for (uint32_t r = 0; r < static_cast<uint32_t>(RebuildReason::Count); ++r) {
+        if (material.reasonMask & (1u << r)) {
+          reasons += str::format(reasons.empty() ? "" : ",", rebuildReasonName(r));
+        }
+      }
+      Logger::info(str::format(
+        "[RTX Geometry]   material 0x", std::hex, materials[i].first, std::dec,
+        " ", rate(material.count), " (", reasons, ")",
+        " | vertices ", material.vertexCount, " indices ", material.indexCount,
+        " vertexShader ", material.usesVertexShader ? 1 : 0,
+        " bones ", material.numBones));
+    }
+
+    diagnostics = GeometryDiagnostics {};
   }
 
   void SceneManager::onFrameEnd(Rc<DxvkContext> ctx, bool raytracedThisFrame) {
@@ -1436,7 +1514,7 @@ namespace dxvk {
 
   SceneManager::ObjectCacheState SceneManager::onSceneObjectAdded(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
     // This is a new object.
-    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas);
+    ObjectCacheState result = processGeometryInfo<true>(ctx, drawCallState, pBlas, true);
     
     assert(result == ObjectCacheState::KBuildBVH);
 
@@ -1446,14 +1524,14 @@ namespace dxvk {
     return result;
   }
   
-  SceneManager::ObjectCacheState SceneManager::onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas) {
+  SceneManager::ObjectCacheState SceneManager::onSceneObjectUpdated(Rc<DxvkContext> ctx, const DrawCallState& drawCallState, BlasEntry* pBlas, bool historyTrusted) {
     if (pBlas->frameLastTouched == m_device->getCurrentFrameId()) {
       pBlas->cacheMaterial(drawCallState.getMaterialData());
       return SceneManager::ObjectCacheState::kUpdateInstance;
     }
 
     // TODO: If mesh is static, no need to do any of the below, just use the existing modifiedGeometryData and set result to kInstanceUpdate.
-    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas);
+    ObjectCacheState result = processGeometryInfo<false>(ctx, drawCallState, pBlas, historyTrusted);
 
     // We dont expect to hit the rebuild path here - since this would indicate an index buffer or other topological change, and that *should* trigger a new scene object (since the hash would change)
     assert(result != ObjectCacheState::KBuildBVH);
@@ -1648,8 +1726,17 @@ namespace dxvk {
 
     ObjectCacheState result = ObjectCacheState::kInvalid;
     BlasEntry* pBlas = nullptr;
-    if (m_drawCallCache.get(drawCallState, &pBlas) == DrawCallCache::CacheState::kExisted) {
-      result = onSceneObjectUpdated(ctx, drawCallState, pBlas);
+    const DrawCallCache::CacheState cacheState = m_drawCallCache.get(drawCallState, &pBlas, existingInstance);
+    if (logRebuildReasons()) {
+      notePairing(cacheState, *pBlas, existingInstance);
+    }
+    if (cacheState != DrawCallCache::CacheState::kNew) {
+      // Under strict pairing only an identical or the instance's own entry holds vertices this draw
+      // may take motion from.
+      const bool historyTrusted = !DrawCallCache::strictCachePairing()
+        || cacheState == DrawCallCache::CacheState::kExact
+        || cacheState == DrawCallCache::CacheState::kOwn;
+      result = onSceneObjectUpdated(ctx, drawCallState, pBlas, historyTrusted);
     } else {
       result = onSceneObjectAdded(ctx, drawCallState, pBlas);
     }

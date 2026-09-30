@@ -40,12 +40,25 @@ class DxvkDevice;
 // is erased by sceneManager's garbage collection.
 class DrawCallCache : public CommonDeviceObject {
 public:
+  RTX_OPTION("rtx.geometry", bool, strictCachePairing, false,
+    "Pairs a draw with the cached mesh of the instance that draws it before searching for a similar one, and\n"
+    "restricts the search. A similar mesh is only taken if no other live instance is linked to it, it has the\n"
+    "same sky class and vertex layout, it has the same material or the same source positions and bones, and\n"
+    "it is within rtx.uniqueObjectDistance. A mesh reached by neither an identical match nor the instance's\n"
+    "own entry has its previous-frame vertices replaced by the current ones, so it cannot produce motion\n"
+    "vectors from another mesh's vertices.\n"
+    "Without this, meshes of one topology (repeated foliage, crowds) can take each other's cached mesh, which\n"
+    "gives them another mesh's motion history and re-points every instance still linked to it.");
+
   using MultimapType = std::unordered_multimap<XXH64_hash_t, BlasEntry, XXH64_hash_passthrough>;
 
+  // How get() paired the draw call with a BlasEntry.
   enum class CacheState
   {
-    kNew = 0,
-    kExisted = 1,
+    kNew = 0,     // A new entry was allocated.
+    kExact = 1,   // An entry holding identical geometry and material.
+    kSimilar = 2, // An entry for other geometry of the same topology, chosen by heuristic.
+    kOwn = 3,     // The drawing instance's own entry, which still describes the same mesh.
   };
 
   DrawCallCache(DrawCallCache const&) = delete;
@@ -54,7 +67,8 @@ public:
   explicit DrawCallCache(DxvkDevice* device);
   ~DrawCallCache();
 
-  CacheState get(const DrawCallState& drawCall, BlasEntry** out);
+  // Pairs a draw call with a BlasEntry. `owner` is the instance the draw updates, if it already has one.
+  CacheState get(const DrawCallState& drawCall, BlasEntry** out, const RtInstance* owner);
 
   MultimapType& getEntries() {return m_entries;}
 
