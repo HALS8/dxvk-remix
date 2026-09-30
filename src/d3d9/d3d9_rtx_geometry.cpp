@@ -180,7 +180,14 @@ namespace dxvk {
       for (uint32_t i = 0; i < count; ++i) {
         const std::string name = i < names.size() && !names[i].empty() ? names[i] : str::format("c", i);
         bool& changed = changedThisDraw[name];
-        changed = changed || std::memcmp(&previous[i], &current[i], sizeof(Vector4)) != 0;
+        const bool registerChanged = std::memcmp(&previous[i], &current[i], sizeof(Vector4)) != 0;
+        changed = changed || registerChanged;
+        if (registerChanged && !logChangingVertexShaderConstantsTextures().empty()) {
+          std::string& sample = m_vsConstantChangeSamples[name];
+          if (sample.empty()) {
+            sample = str::format("c", i, " ", previous[i], " -> ", current[i]);
+          }
+        }
       }
       for (const auto& [name, changed] : changedThisDraw) {
         ConstantChangeCount& counts = m_vsConstantChanges[name];
@@ -209,10 +216,15 @@ namespace dxvk {
                                       " draw comparisons; constants changed since the draw's previous frame (changed/read):");
     for (const auto& [name, counts] : changing) {
       summary += str::format(" ", name, "=", counts.changed, "/", counts.draws);
+      const auto sample = m_vsConstantChangeSamples.find(name);
+      if (sample != m_vsConstantChangeSamples.end()) {
+        summary += str::format(" [", sample->second, "]");
+      }
     }
     Logger::info(summary);
 
     m_vsConstantChanges.clear();
+    m_vsConstantChangeSamples.clear();
     m_vsConstantDrawsCompared = 0;
   }
 
@@ -305,7 +317,9 @@ namespace dxvk {
           runBegin = std::min(ignoredEnd, usedConstants);
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (usedConstants - runBegin) * sizeof(float) * 4, vertexShaderHash);
-        if (logChangingVertexShaderConstants()) {
+        if (logChangingVertexShaderConstants() &&
+            (logChangingVertexShaderConstantsTextures().empty() ||
+             lookupHash(logChangingVertexShaderConstantsTextures(), m_activeDrawCallState.materialData.getColorTexture().getImageHash()))) {
           noteVertexShaderConstants(geoData, usedConstants);
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
