@@ -235,6 +235,9 @@ namespace dxvk {
       return extent;
     };
 
+    // Staging textures written by the conversion below, whose mip chains are generated once it has run
+    std::vector<std::pair<size_t, RtxMipmap::Resource>> stagedTextures;
+
     auto addValidTexture = [&](TextureRef& texture, ReplacementMaterialTextureType::Enum textureType) {
 
       if (!texture.isValid() || !texture.getImageView()) {
@@ -281,14 +284,18 @@ namespace dxvk {
 
         // No matching cached texture found, create a new one
         if (textureIter == m_stagingTextureCache.end()) {
+          const uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(adjustedExtent.width, adjustedExtent.height)))) + 1;
           textureIter =
             m_stagingTextureCache.emplace(
               textureKeyHash,
-              Resources::createImageResource(dxvkCtx, "terrain baking: staging replacement texture", adjustedExtent,
-                                             format, 1, VK_IMAGE_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D, 0)).first;
+              RtxMipmap::createResource(dxvkCtx, "terrain baking: staging replacement texture", adjustedExtent,
+                                        format, 0, VkClearColorValue {}, mipLevels)).first;
         }
 
-        conversionInfo.targetTexture = TextureRef(textureIter->second.view);
+        // The conversion writes the top level; the bake samples the whole chain once it is generated
+        const RtxMipmap::Resource& staged = textureIter->second;
+        conversionInfo.targetTexture = TextureRef(staged.views.empty() ? staged.view : staged.views[0]);
+        stagedTextures.emplace_back(replacementTextures.size() - 1, staged);
 
         // Track lifetime of the resource now since targetTexture object is about to get destroyed
         ctx->getCommandList()->trackResource<DxvkAccess::Write>(textureIter->second.image);
@@ -333,6 +340,11 @@ namespace dxvk {
       if (!isPSReplacementSupportEnabled(drawCallState)) {
         // Pre-process textures to be compatible with baking
         ctx->getCommonObjects()->metaGeometryUtils().decodeAndAddOpacity(ctx, replacementMaterial->getAlbedoOpacityTexture(), replacementTextures);
+
+        for (auto& [index, staged] : stagedTextures) {
+          RtxMipmap::updateMipmap(ctx, staged, MipmapMethod::Simple);
+          replacementTextures[index].targetTexture = TextureRef(staged.view);
+        }
       }
     }
 

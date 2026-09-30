@@ -319,7 +319,9 @@ namespace dxvk {
       }
     };
 
-    fast_unordered_cache<Resources::Resource> m_stagingTextureCache;
+    // Replacement textures converted for baking, each with a full mip chain: the bake draws them at the
+    // cascade's texel density, typically far below their own, and without mips they would alias.
+    fast_unordered_cache<RtxMipmap::Resource> m_stagingTextureCache;
 
     // A terrain material may carry a constant where another carries a texture -- a roughness
     // number rather than a roughness map. Materialising that constant as a 1x1 texture lets it
