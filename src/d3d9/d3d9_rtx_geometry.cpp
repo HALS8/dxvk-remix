@@ -136,9 +136,10 @@ namespace dxvk {
     }
   }
 
-  // A draw call is recognised across frames by its shader and the buffer ranges it reads, so the
-  // comparison is between the same mesh's constants on consecutive frames.
-  void D3D9Rtx::noteVertexShaderConstants(const RasterGeometry& geoData, uint32_t usedConstants) {
+  // A draw call is recognised across frames by its shader and the buffer ranges it reads. Instances
+  // of one mesh share all of those and differ only in their constants; the order they are submitted
+  // in within a frame is what tells them apart.
+  XXH64_hash_t D3D9Rtx::vertexShaderDrawKey(const RasterGeometry& geoData) {
     struct DrawIdentity {
       const void* shader;
       const void* vertexBuffer;
@@ -153,12 +154,13 @@ namespace dxvk {
       geoData.indexBuffer.buffer().ptr(), geoData.indexBuffer.offset(),
       geoData.vertexCount, geoData.indexCount
     };
-    // Instances of one mesh share all of the above and differ only in their constants; the order they
-    // are submitted in within a frame is what tells them apart.
     const XXH64_hash_t identityHash = XXH3_64bits(&identity, sizeof(identity));
     const uint32_t occurrence = m_vsDrawOccurrencesThisFrame[identityHash]++;
-    const XXH64_hash_t key = XXH3_64bits_withSeed(&occurrence, sizeof(occurrence), identityHash);
+    return XXH3_64bits_withSeed(&occurrence, sizeof(occurrence), identityHash);
+  }
 
+  // Compares a draw call's constants with its own on the previous frame.
+  void D3D9Rtx::noteVertexShaderConstants(XXH64_hash_t key, uint32_t usedConstants) {
     const uint32_t count = std::min(usedConstants, caps::MaxFloatConstantsVS);
     const Vector4* current = &d3d9State().vsConsts.fConsts[0];
 
@@ -226,6 +228,70 @@ namespace dxvk {
     m_vsConstantChanges.clear();
     m_vsConstantChangeSamples.clear();
     m_vsConstantDrawsCompared = 0;
+  }
+
+  // rtx.vertexCaptureConstantTolerance. A shader-captured draw's geometry hash covers the float
+  // constants its shader reads, so a mesh whose constants creep by a hair each frame -- a skinned
+  // prop whose bones wobble by a millimetre -- is re-captured, re-interleaved and has its BLAS
+  // rebuilt every frame for no visible change. While every hashed constant stays within the
+  // tolerance of the values the draw's current hash was taken from, that hash is kept. The
+  // comparison is against those values, not the previous frame's, so a slow drift still adds up
+  // to a new capture instead of being ignored forever.
+  XXH64_hash_t D3D9Rtx::settleVertexShaderConstants(XXH64_hash_t key, const D3D9CommonShader& shader,
+                                                    uint32_t usedConstants, XXH64_hash_t hash) {
+    const float tolerance = vertexCaptureConstantTolerance();
+    const Vector4* current = &d3d9State().vsConsts.fConsts[0];
+    const uint32_t count = std::min(usedConstants, caps::MaxFloatConstantsVS);
+
+    const auto runWithin = [&](const std::vector<Vector4>& settled, uint32_t begin, uint32_t end) {
+      for (uint32_t i = begin; i < end; ++i) {
+        for (uint32_t c = 0; c < 4; ++c) {
+          // Negated so a NaN on either side counts as a change
+          if (!(std::abs(settled[i][c] - current[i][c]) <= tolerance)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+    // Only the registers the hash covers: an ignored constant changes every frame by design.
+    const auto withinTolerance = [&](const std::vector<Vector4>& settled) {
+      if (settled.size() != count) {
+        return false;
+      }
+      uint32_t runBegin = 0;
+      for (const auto& [ignoredBegin, ignoredEnd] : shader.GetHashIgnoredFloatConstants()) {
+        if (ignoredBegin >= count) {
+          break;
+        }
+        if (!runWithin(settled, runBegin, ignoredBegin)) {
+          return false;
+        }
+        runBegin = std::min(ignoredEnd, count);
+      }
+      return runWithin(settled, runBegin, count);
+    };
+
+    const auto previous = m_settledVsConstantsLastFrame.find(key);
+    if (previous != m_settledVsConstantsLastFrame.end() && withinTolerance(previous->second.values)) {
+      ++m_settledVsConstantsKept;
+      return m_settledVsConstantsThisFrame.insert_or_assign(key, std::move(previous->second)).first->second.hash;
+    }
+    ++m_settledVsConstantsTaken;
+    m_settledVsConstantsThisFrame.insert_or_assign(key, SettledVsConstants { std::vector<Vector4>(current, current + count), hash });
+    return hash;
+  }
+
+  void D3D9Rtx::logSettledVertexShaderConstants() {
+    constexpr uint32_t kSummaryFrames = 600;
+    if (m_d3d9FrameIndex % kSummaryFrames != 0 || m_settledVsConstantsKept + m_settledVsConstantsTaken == 0) {
+      return;
+    }
+    Logger::info(str::format("[RTX VS constants] tolerance ", vertexCaptureConstantTolerance(), " over ", kSummaryFrames,
+                             " frames: geometry hash kept for ", m_settledVsConstantsKept, " shader-captured draws, taken fresh for ",
+                             m_settledVsConstantsTaken));
+    m_settledVsConstantsKept = 0;
+    m_settledVsConstantsTaken = 0;
   }
 
   Future<GeometryHashes> D3D9Rtx::computeHash(RasterGeometry& geoData, const uint32_t maxIndexValue, const XXH64_hash_t memoizationKey) {
@@ -317,10 +383,19 @@ namespace dxvk {
           runBegin = std::min(ignoredEnd, usedConstants);
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[runBegin], (usedConstants - runBegin) * sizeof(float) * 4, vertexShaderHash);
-        if (logChangingVertexShaderConstants() &&
-            (logChangingVertexShaderConstantsTextures().empty() ||
-             lookupHash(logChangingVertexShaderConstantsTextures(), m_activeDrawCallState.materialData.getColorTexture().getImageHash()))) {
-          noteVertexShaderConstants(geoData, usedConstants);
+
+        const bool noteConstants = logChangingVertexShaderConstants() &&
+          (logChangingVertexShaderConstantsTextures().empty() ||
+           lookupHash(logChangingVertexShaderConstantsTextures(), m_activeDrawCallState.materialData.getColorTexture().getImageHash()));
+        const bool settleConstants = vertexCaptureConstantTolerance() > 0.f;
+        if (noteConstants || settleConstants) {
+          const XXH64_hash_t drawKey = vertexShaderDrawKey(geoData);
+          if (noteConstants) {
+            noteVertexShaderConstants(drawKey, usedConstants);
+          }
+          if (settleConstants) {
+            vertexShaderHash = settleVertexShaderConstants(drawKey, *pVertexShader, usedConstants, vertexShaderHash);
+          }
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.bConsts[0], cb.meta.maxConstIndexB * sizeof(uint32_t)/32, vertexShaderHash);

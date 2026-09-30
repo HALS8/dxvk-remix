@@ -1517,10 +1517,13 @@ namespace dxvk {
     m_stagedBones.clear();
     ++m_d3d9FrameIndex;
     trimVertexCaptureBufferPool();
+    m_vsDrawOccurrencesThisFrame.clear();
     if (logChangingVertexShaderConstants()) {
-      m_vsDrawOccurrencesThisFrame.clear();
       logVertexShaderConstantChanges();
     }
+    m_settledVsConstantsLastFrame.swap(m_settledVsConstantsThisFrame);
+    m_settledVsConstantsThisFrame.clear();
+    logSettledVertexShaderConstants();
   }
 
   void D3D9Rtx::OnPresent(const Rc<DxvkImage>& targetImage) {

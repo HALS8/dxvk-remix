@@ -64,6 +64,12 @@ namespace dxvk {
                "constants with the same draw call's on the previous frame, and every 600 frames logs, per constant name, the share of\n"
                "draws whose value changed. A constant that changes for nearly every draw while the scene is static holds camera or\n"
                "time data, and is what keeps static meshes rebuilding.");
+    RTX_OPTION("rtx", float, vertexCaptureConstantTolerance, 0.f,
+               "CPU and GPU cost (shader vertex capture). A shader-captured draw call's geometry hash covers the float constants its\n"
+               "shader reads, so a mesh whose constants move by a hair each frame -- bones wobbling by a millimetre -- is rebuilt every\n"
+               "frame for no visible change. Above 0, a draw call keeps its geometry hash while every hashed constant stays within this\n"
+               "distance of the values that hash was taken from (not the previous frame's, so slow drift still updates). In the units\n"
+               "the constants hold: world units for translations, unitless for rotations and scales. 0 hashes every change.");
     RTX_OPTION("rtx", fast_unordered_set, logChangingVertexShaderConstantsTextures, {},
                "Restricts rtx.logChangingVertexShaderConstants to draw calls whose albedo texture is listed, and adds a sample of\n"
                "each changing constant's previous and current value. Empty compares every shader-captured draw call.");
@@ -308,7 +314,8 @@ namespace dxvk {
 
     // rtx.logChangingVertexShaderConstants: the last constants seen per draw call, and per constant
     // name how many compared draws read it and how many found it changed since their previous frame.
-    void noteVertexShaderConstants(const RasterGeometry& geoData, uint32_t usedConstants);
+    XXH64_hash_t vertexShaderDrawKey(const RasterGeometry& geoData);
+    void noteVertexShaderConstants(XXH64_hash_t key, uint32_t usedConstants);
     void logVertexShaderConstantChanges();
     struct ConstantChangeCount {
       uint32_t draws = 0;
@@ -319,6 +326,20 @@ namespace dxvk {
     std::unordered_map<std::string, ConstantChangeCount> m_vsConstantChanges;
     std::unordered_map<std::string, std::string> m_vsConstantChangeSamples;   // name -> first change this summary
     uint32_t m_vsConstantDrawsCompared = 0;
+
+    // rtx.vertexCaptureConstantTolerance: per draw call, the constants its current geometry hash was
+    // taken from. Carried from one frame to the next only for draws that are drawn again.
+    XXH64_hash_t settleVertexShaderConstants(XXH64_hash_t key, const D3D9CommonShader& shader,
+                                             uint32_t usedConstants, XXH64_hash_t hash);
+    void logSettledVertexShaderConstants();
+    struct SettledVsConstants {
+      std::vector<Vector4> values;
+      XXH64_hash_t hash = 0;
+    };
+    std::unordered_map<XXH64_hash_t, SettledVsConstants> m_settledVsConstantsThisFrame;
+    std::unordered_map<XXH64_hash_t, SettledVsConstants> m_settledVsConstantsLastFrame;
+    uint64_t m_settledVsConstantsKept = 0;
+    uint64_t m_settledVsConstantsTaken = 0;
 
     // rtx.poolVertexCaptureBuffers
     struct PooledCaptureBuffer {
