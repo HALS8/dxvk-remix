@@ -251,9 +251,15 @@ namespace dxvk {
     void reportLayoutChanges(const LayoutHashes& layout);
     void flushLayoutChangeReport();
     void beginBakedContent(Rc<RtxContext> ctx);
-    static XXH64_hash_t calculateDrawKey(const DrawCallState& drawCallState, const OpaqueMaterialData* replacementMaterial,
-                                         const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
-                                         const D3D9SharedPS& sharedPS);
+    struct DrawKeyPart {
+      enum Enum : uint32_t { Geometry, World, LegacyMaterial, FixedFunctionMaterial, TexcoordMatrices, StageConstants,
+                             ReplacementTextureViews, ReplacementConstants, Count };
+    };
+    using DrawKeyParts = std::array<XXH64_hash_t, DrawKeyPart::Count>;
+    static DrawKeyParts calculateDrawKeyParts(const DrawCallState& drawCallState, const OpaqueMaterialData* replacementMaterial,
+                                              const Matrix4& world, const D3D9FixedFunctionVS* fixedFunctionVS,
+                                              const D3D9SharedPS& sharedPS);
+    void reportDrawKeyChanges(const DrawKeyParts& parts);
     void accountDisplacement(const OpaqueMaterialData& replacementMaterial);
 
     // Triangle counts of a terrain geometry by which projection represents them best. Upward and
@@ -291,6 +297,10 @@ namespace dxvk {
     std::array<uint32_t, LayoutPart::Count> m_layoutChangeCounts {};
     uint32_t m_layoutChanges = 0;
     uint32_t m_framesSinceLayoutReport = 0;
+    std::vector<DrawKeyParts> m_drawKeysThisFrame;
+    std::vector<DrawKeyParts> m_drawKeysLastFrame;
+    std::array<uint32_t, DrawKeyPart::Count> m_drawKeyChangeCounts {};
+    uint32_t m_drawKeysCompared = 0;
     std::unordered_set<XXH64_hash_t> m_bakedDraws;
 
     // A newly created terrain texture holds only its clear value, including where draw calls

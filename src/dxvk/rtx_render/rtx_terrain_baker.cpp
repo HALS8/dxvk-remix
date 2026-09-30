@@ -386,32 +386,29 @@ namespace dxvk {
   // was already baked into the current cascade layout can reuse those texels. Replacement textures
   // are keyed by their current image view rather than their content: a streamed texture changes
   // view when it gains mip levels, and the draw call should then bake again at the new detail.
-  XXH64_hash_t TerrainBaker::calculateDrawKey(const DrawCallState& drawCallState,
-                                              const OpaqueMaterialData* replacementMaterial,
-                                              const Matrix4& world,
-                                              const D3D9FixedFunctionVS* fixedFunctionVS,
-                                              const D3D9SharedPS& sharedPS) {
-    auto combine = [](XXH64_hash_t hash, const void* data, size_t size) {
-      return XXH64(data, size, hash);
-    };
-
-    XXH64_hash_t key = drawCallState.getGeometryData().getHashForRule<rules::FullGeometryHash>();
-    key = combine(key, &world, sizeof(world));
-
-    const XXH64_hash_t legacyMaterial = drawCallState.getMaterialData().computeIdentityHash();
-    key = combine(key, &legacyMaterial, sizeof(legacyMaterial));
+  TerrainBaker::DrawKeyParts TerrainBaker::calculateDrawKeyParts(const DrawCallState& drawCallState,
+                                                                 const OpaqueMaterialData* replacementMaterial,
+                                                                 const Matrix4& world,
+                                                                 const D3D9FixedFunctionVS* fixedFunctionVS,
+                                                                 const D3D9SharedPS& sharedPS) {
+    DrawKeyParts parts {};
+    parts[DrawKeyPart::Geometry] = drawCallState.getGeometryData().getHashForRule<rules::FullGeometryHash>();
+    parts[DrawKeyPart::World] = XXH64(&world, sizeof(world), 0);
+    parts[DrawKeyPart::LegacyMaterial] = drawCallState.getMaterialData().computeIdentityHash();
 
     if (fixedFunctionVS != nullptr) {
-      key = combine(key, &fixedFunctionVS->Material, sizeof(fixedFunctionVS->Material));
-      key = combine(key, fixedFunctionVS->TexcoordMatrices.data(), sizeof(fixedFunctionVS->TexcoordMatrices));
+      parts[DrawKeyPart::FixedFunctionMaterial] = XXH64(&fixedFunctionVS->Material, sizeof(fixedFunctionVS->Material), 0);
+      parts[DrawKeyPart::TexcoordMatrices] = XXH64(fixedFunctionVS->TexcoordMatrices.data(), sizeof(fixedFunctionVS->TexcoordMatrices), 0);
     }
 
+    XXH64_hash_t stages = 0;
     for (const D3D9SharedPS::Stage& stage : sharedPS.Stages) {
-      key = combine(key, stage.Constant, sizeof(stage.Constant));
-      key = combine(key, stage.BumpEnvMat, sizeof(stage.BumpEnvMat));
-      key = combine(key, &stage.BumpEnvLScale, sizeof(stage.BumpEnvLScale));
-      key = combine(key, &stage.BumpEnvLOffset, sizeof(stage.BumpEnvLOffset));
+      stages = XXH64(stage.Constant, sizeof(stage.Constant), stages);
+      stages = XXH64(stage.BumpEnvMat, sizeof(stage.BumpEnvMat), stages);
+      stages = XXH64(&stage.BumpEnvLScale, sizeof(stage.BumpEnvLScale), stages);
+      stages = XXH64(&stage.BumpEnvLOffset, sizeof(stage.BumpEnvLOffset), stages);
     }
+    parts[DrawKeyPart::StageConstants] = stages;
 
     if (replacementMaterial != nullptr) {
       const TextureRef* textures[] = {
@@ -419,15 +416,34 @@ namespace dxvk {
         &replacementMaterial->getTangentTexture(), &replacementMaterial->getHeightTexture(),
         &replacementMaterial->getRoughnessTexture(), &replacementMaterial->getMetallicTexture(),
         &replacementMaterial->getEmissiveColorTexture() };
+      XXH64_hash_t views = 0;
       for (const TextureRef* texture : textures) {
         const DxvkImageView* view = texture->getImageView();
-        key = combine(key, &view, sizeof(view));
+        views = XXH64(&view, sizeof(view), views);
       }
+      parts[DrawKeyPart::ReplacementTextureViews] = views;
       const float constants[] = { replacementMaterial->getRoughnessConstant(), replacementMaterial->getMetallicConstant() };
-      key = combine(key, constants, sizeof(constants));
+      parts[DrawKeyPart::ReplacementConstants] = XXH64(constants, sizeof(constants), 0);
     }
 
-    return key;
+    return parts;
+  }
+
+  // Compares each draw call's key with the key of the draw call submitted at the same position on
+  // the previous frame: a key that changes every frame rebakes every draw although the cascade survives.
+  void TerrainBaker::reportDrawKeyChanges(const DrawKeyParts& parts) {
+    if (!logLayoutChanges()) {
+      return;
+    }
+    const size_t index = m_drawKeysThisFrame.size();
+    m_drawKeysThisFrame.push_back(parts);
+    if (index >= m_drawKeysLastFrame.size()) {
+      return;
+    }
+    ++m_drawKeysCompared;
+    for (uint32_t i = 0; i < DrawKeyPart::Count; i++) {
+      m_drawKeyChangeCounts[i] += m_drawKeysLastFrame[index][i] != parts[i] ? 1 : 0;
+    }
   }
 
   // Calls visit(up) for every non-degenerate triangle of the draw call, with the cosine of the angle
@@ -671,9 +687,11 @@ namespace dxvk {
     }
 
     const Matrix4& world = drawCallState.usesVertexShader ? prevCB.programmablePipeline.normalTransform : prevCB.fixedFunction.World;
-    const XXH64_hash_t drawKey = calculateDrawKey(drawCallState, replacementMaterial, world,
-                                                  drawCallState.usesVertexShader ? nullptr : &prevCB.fixedFunction,
-                                                  prevSharedState);
+    const DrawKeyParts drawKeyParts = calculateDrawKeyParts(drawCallState, replacementMaterial, world,
+                                                            drawCallState.usesVertexShader ? nullptr : &prevCB.fixedFunction,
+                                                            prevSharedState);
+    const XXH64_hash_t drawKey = XXH64(drawKeyParts.data(), sizeof(drawKeyParts), 0);
+    reportDrawKeyChanges(drawKeyParts);
 
     // Already in the cascade map: the texels this draw call would write are there from an earlier frame.
     if (m_bakedDraws.count(drawKey) != 0) {
@@ -1312,6 +1330,8 @@ namespace dxvk {
     m_cascadeCompositionChangedThisFrame = false;
 
     flushLayoutChangeReport();
+    m_drawKeysLastFrame.swap(m_drawKeysThisFrame);
+    m_drawKeysThisFrame.clear();
 
     m_numDrawsBakedLastFrame = m_numDrawsBakedThisFrame;
     m_numDrawsReusedLastFrame = m_numDrawsReusedThisFrame;
@@ -1497,10 +1517,20 @@ namespace dxvk {
                              ", displacement ", m_layoutChangeCounts[LayoutPart::Displacement],
                              " (now in ", m_prevFrameMaxDisplaceIn, " out ", m_prevFrameMaxDisplaceOut, ")",
                              ", material options ", m_layoutChangeCounts[LayoutPart::MaterialOptions],
-                             " | per frame baked ", m_numDrawsBakedLastFrame, " reused ", m_numDrawsReusedLastFrame));
+                             " | per frame baked ", m_numDrawsBakedLastFrame, " reused ", m_numDrawsReusedLastFrame,
+                             " | draw keys changed, of ", m_drawKeysCompared, " compared: geometry ", m_drawKeyChangeCounts[DrawKeyPart::Geometry],
+                             ", world ", m_drawKeyChangeCounts[DrawKeyPart::World],
+                             ", legacy material ", m_drawKeyChangeCounts[DrawKeyPart::LegacyMaterial],
+                             ", fixed function material ", m_drawKeyChangeCounts[DrawKeyPart::FixedFunctionMaterial],
+                             ", texcoord matrices ", m_drawKeyChangeCounts[DrawKeyPart::TexcoordMatrices],
+                             ", stage constants ", m_drawKeyChangeCounts[DrawKeyPart::StageConstants],
+                             ", replacement views ", m_drawKeyChangeCounts[DrawKeyPart::ReplacementTextureViews],
+                             ", replacement constants ", m_drawKeyChangeCounts[DrawKeyPart::ReplacementConstants]));
     m_framesSinceLayoutReport = 0;
     m_layoutChanges = 0;
     m_layoutChangeCounts = {};
+    m_drawKeysCompared = 0;
+    m_drawKeyChangeCounts = {};
   }
 
   // Starts the frame's baking: either from scratch, when the layout changed or the textures lost
