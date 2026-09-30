@@ -125,6 +125,8 @@ namespace dxvk {
                  "Bakes a replacement material's roughness or metallic constant where that material has no texture for it.\n"
                  "Without this, a terrain surface carrying a constant contributes nothing to that texture's cascade, so the\n"
                  "texels it covers keep the cascade's clear value - one value for every such surface in the world.\n"
+                 "A material with no normal map bakes a flat normal the same way, so that it covers the normals of the\n"
+                 "layers beneath it rather than letting them show through.\n"
                  "A constant costs the draw call an extra baking pass, so turning this off trades per-material accuracy for\n"
                  "baking cost.");
       // ToDo disable by default

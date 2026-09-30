@@ -316,7 +316,11 @@ namespace dxvk {
     replacementTextures.reserve(ReplacementMaterialTextureType::Count);
 
     if (Material::bakeSecondaryPBRTextures()) {
-      addValidTexture(replacementMaterial->getNormalTexture(), ReplacementMaterialTextureType::Normal);
+      // A layer without a normal map is flat, and must cover the normals of the layers beneath it
+      // as its albedo covers theirs: (0.5, 0.5) is the octahedral encoding of the unperturbed normal.
+      constexpr float kFlatOctahedralNormal = 0.5f;
+      addTextureOrConstant(replacementMaterial->getNormalTexture(), ReplacementMaterialTextureType::Normal,
+                           kFlatOctahedralNormal);
       addValidTexture(replacementMaterial->getTangentTexture(), ReplacementMaterialTextureType::Tangent);
       addValidTexture(replacementMaterial->getHeightTexture(), ReplacementMaterialTextureType::Height);
       addTextureOrConstant(replacementMaterial->getRoughnessTexture(), ReplacementMaterialTextureType::Roughness,
