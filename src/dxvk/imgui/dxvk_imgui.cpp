@@ -82,6 +82,7 @@
 #include "rtx_render/rtx_weather.h"
 // NV-DXVK end
 #include "../rtx_render/rtx_sharc.h"
+#include "../rtx_render/rtx_draw_call_cache.h"
 
 
 namespace dxvk {
@@ -2911,6 +2912,7 @@ namespace dxvk {
       RemixGui::Separator();
 
       RemixGui::DragFloat("Unique Object Search Distance", &RtxOptions::uniqueObjectDistanceObject(), 0.01f, FLT_MIN, FLT_MAX, "%.3f", sliderFlags);
+      RemixGui::Checkbox("Strict Geometry Cache Pairing", &DrawCallCache::strictCachePairingObject());
       RemixGui::Separator();
 
       RemixGui::DragFloat("Vertex Color Strength", &RtxOptions::vertexColorStrengthObject(), 0.001f, 0.0f, 1.0f);
