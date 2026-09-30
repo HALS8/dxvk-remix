@@ -117,6 +117,12 @@ namespace dxvk {
                Material::Properties::metallicConstant(), Material::Properties::metallicConstant() };
       break;
 
+    case ReplacementMaterialTextureType::Normal:
+      // Baked normals are raw tangent space vectors. A zero vector does not normalize, so an
+      // unwritten texel must read as the unperturbed normal instead.
+      return { 0.0f, 0.0f, 1.0f, 0.0f };
+      break;
+
     default:
       return { 0.0f, 0.0f, 0.0f, 0.0f };
       break;

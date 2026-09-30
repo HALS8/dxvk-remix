@@ -269,5 +269,8 @@ namespace dxvk {
     std::function<uint32_t()> loadTexturePostOffsetFnc,
     std::function<uint32_t()> loadAlbedoOpacityFnc,
     std::function<void(uint32_t vec4value)> storeVec4ValueToRegisterFnc,
-    std::function<uint32_t()> loadVec4ValueFromRegisterFnc);
+    std::function<uint32_t()> loadVec4ValueFromRegisterFnc,
+    // Receives the replaced stage's final value when a secondary texture is baked, for a caller
+    // that outputs it in place of the colour ops' result
+    std::function<void(uint32_t vec4value)> storeBakedSecondaryTextureFnc = {});
 }

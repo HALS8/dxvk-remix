@@ -638,6 +638,11 @@ namespace dxvk {
 
 // NV-DXVK start
     uint32_t postprocessVertexColorForTerrainBaking(uint32_t vertexColor);
+    uint32_t outputBakedSecondaryTexture(uint32_t color);
+
+    // The replaced stage's decoded secondary texture (normal, roughness, ...), captured when the
+    // baker bakes one, so that the draw outputs it rather than what the game's colour ops make of it.
+    uint32_t              m_bakedSecondaryTexture = 0;
 // NV-DXVK end
 
     std::string           m_filename;
@@ -1711,7 +1716,8 @@ namespace dxvk {
     std::function<uint32_t()> loadTexturePostOffsetFnc,
     std::function<uint32_t()> loadAlbedoOpacityFnc,
     std::function<void(uint32_t vec4value)> storeVec4ValueToRegisterFnc,
-    std::function<uint32_t()> loadVec4ValueFromRegisterFnc) {
+    std::function<uint32_t()> loadVec4ValueFromRegisterFnc,
+    std::function<void(uint32_t vec4value)> storeBakedSecondaryTextureFnc) {
 
     // Types
     uint32_t boolType = spvModule.defBoolType();
@@ -1819,6 +1825,9 @@ namespace dxvk {
 
       // The new texture value needs to be stored before branching out, and reloaded after
       storeVec4ValueToRegisterFnc(textureValue);
+      if (storeBakedSecondaryTextureFnc) {
+        storeBakedSecondaryTextureFnc(textureValue);
+      }
 
       // ~Decode the input texture and add opacity
       spvModule.opBranch(addOpacityEndLabel);
@@ -1893,6 +1902,46 @@ namespace dxvk {
   
 // NV-DXVK end
 
+  // A secondary texture's value is a vector or a scalar property, not a colour: the game's colour
+  // ops -- a lightmap modulate, a saturate that clamps a normal's negative components -- would
+  // corrupt it. So the draw outputs the replaced stage's decoded value as is. Alpha still runs
+  // through the game's alpha ops, since that is the coverage every baked texture must share.
+  uint32_t D3D9FFShaderCompiler::outputBakedSecondaryTexture(uint32_t color) {
+    if (!TerrainBaker::Material::replacementSupportInPS_fixedFunction()) {
+      return color;
+    }
+
+    uint32_t bakingSpec = m_module.specConst32(m_uint32Type, 0);
+    m_module.setDebugName(bakingSpec, "replacement_texture_spec");
+    m_module.decorateSpecId(bakingSpec, getSpecId(D3D9SpecConstantId::ReplacementTextureCategory));
+    uint32_t textureCategory = m_module.opBitwiseAnd(m_uint32Type, bakingSpec,
+                                                     m_module.constu32(kReplacementTextureCategoryMask));
+
+    uint32_t outputPtr = m_module.defPointerType(m_vec4Type, spv::StorageClassPrivate);
+    uint32_t output = m_module.newVar(outputPtr, spv::StorageClassPrivate);
+    m_module.opStore(output, color);
+
+    uint32_t secondaryBeginLabel = m_module.allocateId();
+    uint32_t secondaryEndLabel = m_module.allocateId();
+
+    uint32_t isNotAlbedoOpacity = m_module.opINotEqual(m_boolType, textureCategory, m_module.constu32(ReplacementMaterialTextureCategory::AlbedoOpacity));
+    m_module.opSelectionMerge(secondaryEndLabel, spv::SelectionControlMaskNone);
+    m_module.opBranchConditional(isNotAlbedoOpacity, secondaryBeginLabel, secondaryEndLabel);
+    {
+      m_module.opLabel(secondaryBeginLabel);
+
+      // secondary.xyz, color.w
+      uint32_t secondary = m_module.opLoad(m_vec4Type, m_bakedSecondaryTexture);
+      std::array<uint32_t, 4> indices = { 0, 1, 2, 4 + 3 };
+      m_module.opStore(output, m_module.opVectorShuffle(m_vec4Type, secondary, color, indices.size(), indices.data()));
+
+      m_module.opBranch(secondaryEndLabel);
+      m_module.opLabel(secondaryEndLabel);
+    }
+
+    return m_module.opLoad(m_vec4Type, output);
+  }
+
   void D3D9FFShaderCompiler::compilePS() {
     setupPS();
 
@@ -1908,6 +1957,10 @@ namespace dxvk {
 
 // NV-DXVK start: Replacement material texture support
     current = postprocessVertexColorForTerrainBaking(current);
+    if (TerrainBaker::Material::replacementSupportInPS_fixedFunction()) {
+      m_bakedSecondaryTexture = m_module.newVar(m_module.defPointerType(m_vec4Type, spv::StorageClassPrivate), spv::StorageClassPrivate);
+      m_module.opStore(m_bakedSecondaryTexture, m_module.constvec4f32(0.0f, 0.0f, 1.0f, 0.0f));
+    }
 // NV-DXVK end
 
     for (uint32_t i = 0; i < caps::TextureStageCount; i++) {
@@ -2047,7 +2100,11 @@ namespace dxvk {
             };
             
 
-            return postprocessTextureReadForTerrainBaking(m_module, textureValue, i, texcoord, texcoord_t, loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc);
+            auto storeBakedSecondaryTextureFnc = [&](uint32_t vec4value) {
+              m_module.opStore(m_bakedSecondaryTexture, vec4value);
+            };
+
+            return postprocessTextureReadForTerrainBaking(m_module, textureValue, i, texcoord, texcoord_t, loadTexturePreOffsetFnc, loadTextureScaleFnc, loadTexturePostOffsetFnc, loadAlbedoOpacityFnc, storeVec4ValueToRegisterFnc, loadVec4ValueFromRegisterFnc, storeBakedSecondaryTextureFnc);
           };
 
           texture = postprocessColorOutputTextureRead(texture);
@@ -2386,6 +2443,10 @@ namespace dxvk {
     fogCtx.HasSpecular = false;
     fogCtx.Specular    = 0;
     current = DoFixedFunctionFog(m_module, fogCtx);
+
+// NV-DXVK start: Replacement material texture support
+    current = outputBakedSecondaryTexture(current);
+// NV-DXVK end
 
     m_module.opStore(m_ps.out.COLOR, current);
 
