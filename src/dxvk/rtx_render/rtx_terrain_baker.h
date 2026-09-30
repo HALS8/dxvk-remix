@@ -232,6 +232,7 @@ namespace dxvk {
     TextureRef* getConstantTexture(Rc<DxvkContext>& ctx, float value);
     void reportSurfaceOrientation(const DrawCallState& drawCallState);
     void keepReplacementTexturesResident(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData& replacementMaterial);
+    bool gatherLegacyLayerTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, std::vector<RtxGeometryUtils::TextureConversionInfo>& textures);
     bool gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx, const DrawCallState& drawCallState, OpaqueMaterialData* replacementMaterial, std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures);
     void updateMaterialData(Rc<RtxContext> ctx);
     void onFrameBegin(Rc<RtxContext> ctx, const DxvkContextState& dxvkCtxState);

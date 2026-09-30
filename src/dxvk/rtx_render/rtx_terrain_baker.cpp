@@ -49,6 +49,9 @@ namespace {
   // Faces whose normal is further than this from vertical (as a cosine) may pick a horizontal side
   // projection, allowing for the band over which a hit dithers between projections.
   const float kSideProjectionSteepness = 0.8f;
+
+  // (0.5, 0.5) is the octahedral encoding of the unperturbed normal.
+  constexpr float kFlatOctahedralNormal = 0.5f;
 }
 
 namespace dxvk {
@@ -193,6 +196,47 @@ namespace dxvk {
     }
   }
 
+  // A layer with no replacement material still covers the layers beneath it. Baking only its albedo
+  // would leave their normals, roughness and metalness showing wherever it is drawn over them, so it
+  // also bakes the unperturbed normal and the legacy material constants, blended by its own albedo's
+  // opacity. The constants are 1x1 images, so this needs the pixel shader path, which reads opacity
+  // from the albedo per texel; the staging path would reduce it to a single value.
+  bool TerrainBaker::gatherLegacyLayerTextures(Rc<RtxContext> ctx,
+                                               const DrawCallState& drawCallState,
+                                               std::vector<RtxGeometryUtils::TextureConversionInfo>& textures) {
+    if (!Material::bakeSecondaryPBRTextures() || !Material::bakeMaterialConstants() ||
+        !isPSReplacementSupportEnabled(drawCallState)) {
+      return false;
+    }
+
+    const TextureRef& albedoOpacity = drawCallState.getMaterialData().getColorTexture();
+    if (!albedoOpacity.isValid() || albedoOpacity.getImageView() == nullptr) {
+      return false;
+    }
+
+    const auto add = [&](ReplacementMaterialTextureType::Enum type, const TextureRef& texture) {
+      RtxGeometryUtils::TextureConversionInfo& conversionInfo = textures.emplace_back();
+      conversionInfo.type = type;
+      conversionInfo.targetTexture = texture;
+    };
+
+    // Albedo opacity first: the baking aborts if it fails, and secondary textures read their opacity from it
+    add(ReplacementMaterialTextureType::AlbedoOpacity, albedoOpacity);
+
+    const std::pair<ReplacementMaterialTextureType::Enum, float> constants[] = {
+      { ReplacementMaterialTextureType::Normal, kFlatOctahedralNormal },
+      { ReplacementMaterialTextureType::Roughness, LegacyMaterialDefaults::roughnessConstant() },
+      { ReplacementMaterialTextureType::Metallic, LegacyMaterialDefaults::metallicConstant() },
+    };
+    Rc<DxvkContext> dxvkCtx = ctx;
+    for (const auto& [type, value] : constants) {
+      if (TextureRef* constantTexture = getConstantTexture(dxvkCtx, value)) {
+        add(type, *constantTexture);
+      }
+    }
+    return true;
+  }
+
   // Gathers available textures from a replacement material and
   // runs a compute shader to convert them into a compatible format for baking
   bool TerrainBaker::gatherAndPreprocessReplacementTextures(Rc<RtxContext> ctx,
@@ -200,7 +244,7 @@ namespace dxvk {
                                                             OpaqueMaterialData* replacementMaterial,
                                                             std::vector<RtxGeometryUtils::TextureConversionInfo>& replacementTextures) {
     if (!replacementMaterial) {
-      return false;
+      return gatherLegacyLayerTextures(ctx, drawCallState, replacementTextures);
     }
 
     Resources& resourceManager = ctx->getResourceManager();
@@ -330,8 +374,7 @@ namespace dxvk {
 
     if (Material::bakeSecondaryPBRTextures()) {
       // A layer without a normal map is flat, and must cover the normals of the layers beneath it
-      // as its albedo covers theirs: (0.5, 0.5) is the octahedral encoding of the unperturbed normal.
-      constexpr float kFlatOctahedralNormal = 0.5f;
+      // as its albedo covers theirs.
       addTextureOrConstant(replacementMaterial->getNormalTexture(), ReplacementMaterialTextureType::Normal,
                            kFlatOctahedralNormal);
       addValidTexture(replacementMaterial->getTangentTexture(), ReplacementMaterialTextureType::Tangent);
