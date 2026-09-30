@@ -1999,6 +1999,11 @@ namespace dxvk {
       return D3D_OK;
     }
 
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_ALBEDO_TINT)) {
+      m_rtx.SetAlbedoTint(Value);
+      return D3D_OK;
+    }
+
     // D3D9 only allows reading for values 0 and 7-255 so we don't need to do anything but return OK
     if (unlikely(State > 255 || (State < D3DRS_ZENABLE && State != 0))) {
       return D3D_OK;
@@ -2339,6 +2344,11 @@ namespace dxvk {
 
     if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_FORCE_CATEGORIES)) {
       *pValue = m_rtx.GetForcedCategories();
+      return D3D_OK;
+    }
+
+    if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_ALBEDO_TINT)) {
+      *pValue = m_rtx.GetAlbedoTint();
       return D3D_OK;
     }
 
@@ -7912,8 +7922,10 @@ namespace dxvk {
     m_rtx.SetDirty(D3D9RtxFlag::DirtyClipPlanes);
     // NV-DXVK end
 
-    // Fork touchpoint: the suppression render state resets with the rest, see remix_c.h.
+    // Fork touchpoint: the Remix render states reset with the rest, see remix_c.h.
     m_rtx.SetSuppressedCategories(0);
+    m_rtx.SetForcedCategories(0);
+    m_rtx.SetAlbedoTint(REMIXAPI_D3D9_ALBEDO_TINT_NONE);
 
     return D3D_OK;
   }

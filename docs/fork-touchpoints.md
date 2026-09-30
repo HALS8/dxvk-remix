@@ -4715,3 +4715,38 @@ detail and displacement travelling with the camera, most visible on slopes. Acro
 (in log2 units) of each level the coarser level is picked with a probability rising to 1 at the
 boundary, from a per-point, per-frame hash (`cascadeTransitionNoise`), so the upscaler and denoiser
 blend the two (surface_interaction.slangh, +25 / -8 LOC).
+
+---
+
+## Workstream - D3D9 per-draw albedo tint masked by albedo alpha (local - 2026-09-29)
+
+Some games tint part of a surface by a per-draw constant colour in the pixel shader, choosing where
+by the albedo texture's alpha: `albedo = tex.rgb * lerp(colour, 1, tex.a)`, the usual way of
+player-dyed cloth and armour. Remix never runs the pixel shader, so those surfaces render in the
+undyed base colour, and no single-stage D3D9 texture op expresses the masked multiply.
+
+`REMIXAPI_D3D9_RS_ALBEDO_TINT` (`0x52584303`) set to `REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA`
+makes the following draws apply it, with the colour taken from `D3DRS_TEXTUREFACTOR`, which D3D9
+ignores while a pixel shader is bound and which every surface already carries (8 bits per channel,
+gamma-encoded, so colours above 1.0 clip). The mask is the raw sampled albedo alpha, so the tint
+applies to a replacement material's albedo as well and survives texture replacement; the factor is
+linearised when the sampler has already linearised the albedo. The alpha is spent on the mask, so
+these surfaces take opacity from the material constant rather than from it. Same render-state
+contract, bridge caveat and detection as `REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES`; `ResetState` now
+clears the forced-category mask as well, which that contract already promised. Upstreamable.
+
+- **public/include/remix/remix_c.h** - block. *Defines `REMIXAPI_D3D9_RS_ALBEDO_TINT` and its two
+  values with the contract, after `REMIXAPI_D3D9_RS_FORCE_CATEGORIES`.*
+- **src/d3d9/d3d9_device.cpp** - inline tweak (+12 LOC). *`SetRenderState` / `GetRenderState`
+  intercept the state; `ResetState` clears it and the forced categories.*
+- **src/d3d9/d3d9_rtx.h / .cpp** - inline tweak (+22 LOC). *`SetAlbedoTint` / `GetAlbedoTint`; the
+  mode is copied into the draw's `LegacyMaterialData` after `setLegacyMaterialState`.*
+- **src/dxvk/rtx_render/rtx_materials.h** - inline tweak (+6 LOC). *`isAlbedoTintMaskedByAlpha` on
+  `LegacyMaterialData` and `RtSurface`, packed into `textureFlags` bit 15.*
+- **src/dxvk/rtx_render/rtx_materials.cpp** - inline tweak (+3 LOC). *The flag joins the legacy
+  material identity hash, so a change leaves the preserve path.*
+- **src/dxvk/rtx_render/rtx_instance_manager.cpp** - inline tweak (+1 LOC). *Surface copy.*
+- **src/dxvk/shaders/rtx/concept/surface/surface.h** - inline tweak (+6 LOC). *Decode.*
+- **src/dxvk/shaders/rtx/concept/surface_material/opaque_surface_material_interaction.slangh** -
+  inline tweak (+15 / -2 LOC). *Applies the tint ahead of the texture stage operations and keeps the
+  alpha out of opacity; `albedoAlreadyLinear` moves up to serve both.*

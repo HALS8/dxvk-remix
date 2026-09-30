@@ -221,6 +221,18 @@ namespace dxvk {
       return m_forcedCategoryBits;
     }
 
+    /**
+      * \brief: Sets how following draw calls tint their albedo -- the
+      *         REMIXAPI_D3D9_RS_ALBEDO_TINT render state, see remix_c.h.
+      *
+      * \param [in] mode: a REMIXAPI_D3D9_ALBEDO_TINT_* value
+      */
+    void SetAlbedoTint(uint32_t mode);
+
+    uint32_t GetAlbedoTint() const {
+      return m_albedoTint;
+    }
+
   private: 
     // Reused fixed-size blocks: once allocated, a block is never reallocated, so background
     // skinning can keep raw Matrix4* into a prior copy. m_blocks can grow, but the heap
@@ -272,6 +284,8 @@ namespace dxvk {
     CategoryFlags m_suppressedCategories = 0;
     uint32_t m_forcedCategoryBits = 0;
     CategoryFlags m_forcedCategories = 0;
+    uint32_t m_albedoTint = 0;
+    bool m_albedoTintMaskedByAlpha = false;
 
     int m_activeOcclusionQueries = 0;
 

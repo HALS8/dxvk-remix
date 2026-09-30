@@ -691,7 +691,11 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     }
     else
     {
-      opacity = albedoOpacitySample.a;
+      // A tint mask in the alpha channel is not coverage, so opacity keeps the material constant.
+      if (!surface.isAlbedoTintMaskedByAlpha)
+      {
+        opacity = albedoOpacitySample.a;
+      }
       thinFilmThickness = float(0.0f);
     }
   }
@@ -712,6 +716,17 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
 #endif
 
   vec4 tFactor = unorm4x8ToFloat4x32(surface.tFactor).bgra;
+
+  const bool albedoAlreadyLinear = albedoOpacityLoaded && (opaqueSurfaceMaterial.flags & OPAQUE_SURFACE_MATERIAL_FLAG_ALBEDO_TEXTURE_IS_SRGB);
+
+  // The tint is gamma-encoded like the texture colour. A multiply commutes with the transfer curve
+  // (exactly for a power curve, closely for sRGB), so an albedo already linearised by the sampler
+  // takes the linearised factor.
+  if (surface.isAlbedoTintMaskedByAlpha && albedoOpacityLoaded)
+  {
+    const vec3 tint = mix(tFactor.rgb, vec3(1.0f), albedoOpacitySample.a);
+    albedo *= albedoAlreadyLinear ? gammaToLinear(tint) : tint;
+  }
 
   // WAR for REMIX-1573: texture ops for opacity should happen during baking and be skipped here for baked terrain,
   // but right now the opacity is not 1 in the baked texture where it is expected to be and thus texture ops
@@ -772,7 +787,6 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   // an sRGB VkFormat however, the sampler hardware already linearized it on read, so applying gammaToLinear again would double
   // linearize it (darkening the result); OPAQUE_SURFACE_MATERIAL_FLAG_ALBEDO_TEXTURE_IS_SRGB (set on the CPU) marks that case.
   // The albedo constant is always gamma-encoded, so this only skips when the texture was actually the source.
-  const bool albedoAlreadyLinear = albedoOpacityLoaded && (opaqueSurfaceMaterial.flags & OPAQUE_SURFACE_MATERIAL_FLAG_ALBEDO_TEXTURE_IS_SRGB);
   if (!albedoAlreadyLinear)
   {
     albedo = gammaToLinear(albedo);
