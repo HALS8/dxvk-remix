@@ -244,44 +244,56 @@ namespace dxvk {
   // rebuilt every frame for no visible change. While every hashed constant stays within the
   // tolerance of the values the draw's current hash was taken from, that hash is kept. The
   // comparison is against those values, not the previous frame's, so a slow drift still adds up
-  // to a new capture instead of being ignored forever.
+  // to a new capture instead of being ignored forever. `watched` is the draw's geometry when its
+  // albedo is listed in rtx.logChangingVertexShaderConstantsTextures, and makes a fresh hash explain itself.
   XXH64_hash_t D3D9Rtx::settleVertexShaderConstants(XXH64_hash_t key, const D3D9CommonShader& shader,
-                                                    uint32_t usedConstants, XXH64_hash_t hash) {
+                                                    uint32_t usedConstants, XXH64_hash_t hash, const RasterGeometry* watched) {
     const float tolerance = vertexCaptureConstantTolerance();
     const Vector4* current = &d3d9State().vsConsts.fConsts[0];
     const uint32_t count = std::min(usedConstants, caps::MaxFloatConstantsVS);
 
-    const auto runWithin = [&](const std::vector<Vector4>& settled, uint32_t begin, uint32_t end) {
-      for (uint32_t i = begin; i < end; ++i) {
-        for (uint32_t c = 0; c < 4; ++c) {
-          // Negated so a NaN on either side counts as a change
-          if (!(std::abs(settled[i][c] - current[i][c]) <= tolerance)) {
-            return false;
+    // The first hashed register beyond the tolerance, or `count` when every one is within it. Only
+    // the registers the hash covers: an ignored constant changes every frame by design.
+    const auto firstRegisterBeyondTolerance = [&](const std::vector<Vector4>& settled) {
+      for (const auto& [begin, end] : shader.GetHashedFloatConstants()) {
+        for (uint32_t i = begin; i < std::min(end, count); ++i) {
+          for (uint32_t c = 0; c < 4; ++c) {
+            // Negated so a NaN on either side counts as a change
+            if (!(std::abs(settled[i][c] - current[i][c]) <= tolerance)) {
+              return i;
+            }
           }
         }
       }
-      return true;
+      return count;
     };
-    // Only the registers the hash covers: an ignored constant changes every frame by design.
-    const auto withinTolerance = [&](const std::vector<Vector4>& settled) {
-      if (settled.size() != count) {
-        return false;
+
+    constexpr uint32_t kMaxExplainedPerSummary = 60;
+    const auto explain = [&](const std::string& reason) {
+      if (watched == nullptr || m_settledVsConstantsExplained >= kMaxExplainedPerSummary) {
+        return;
       }
-      for (const auto& [begin, end] : shader.GetHashedFloatConstants()) {
-        if (begin >= count) {
-          break;
-        }
-        if (!runWithin(settled, begin, std::min(end, count))) {
-          return false;
-        }
-      }
-      return true;
+      ++m_settledVsConstantsExplained;
+      const Matrix4& world = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)];
+      Logger::info(str::format("[RTX VS constants] frame ", m_d3d9FrameIndex, " draw ", std::hex, key, std::dec, " (",
+                               watched->vertexCount, " vertices, ", watched->indexCount, " indices, world ", world[3],
+                               ") hash taken fresh: ", reason));
     };
 
     const auto previous = m_settledVsConstantsLastFrame.find(key);
-    if (previous != m_settledVsConstantsLastFrame.end() && withinTolerance(previous->second.values)) {
-      ++m_settledVsConstantsKept;
-      return m_settledVsConstantsThisFrame.insert_or_assign(key, std::move(previous->second)).first->second.hash;
+    if (previous == m_settledVsConstantsLastFrame.end()) {
+      explain("no draw with this shader, buffers and placement last frame");
+    } else if (previous->second.values.size() != count) {
+      explain("the shader's constant count changed");
+    } else {
+      const uint32_t beyond = firstRegisterBeyondTolerance(previous->second.values);
+      if (beyond == count) {
+        ++m_settledVsConstantsKept;
+        return m_settledVsConstantsThisFrame.insert_or_assign(key, std::move(previous->second)).first->second.hash;
+      }
+      const std::vector<std::string>& names = shader.GetFloatConstantNames();
+      explain(str::format(beyond < names.size() && !names[beyond].empty() ? names[beyond] : std::string("unnamed"), " c", beyond,
+                          " ", previous->second.values[beyond], " -> ", current[beyond]));
     }
     ++m_settledVsConstantsTaken;
     m_settledVsConstantsThisFrame.insert_or_assign(key, SettledVsConstants { std::vector<Vector4>(current, current + count), hash });
@@ -298,6 +310,7 @@ namespace dxvk {
                              m_settledVsConstantsTaken));
     m_settledVsConstantsKept = 0;
     m_settledVsConstantsTaken = 0;
+    m_settledVsConstantsExplained = 0;
   }
 
   Future<GeometryHashes> D3D9Rtx::computeHash(RasterGeometry& geoData, const uint32_t maxIndexValue, const XXH64_hash_t memoizationKey) {
@@ -387,9 +400,10 @@ namespace dxvk {
           vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.fConsts[begin], (std::min(end, usedConstants) - begin) * sizeof(float) * 4, vertexShaderHash);
         }
 
+        const bool watched = !logChangingVertexShaderConstantsTextures().empty() &&
+          lookupHash(logChangingVertexShaderConstantsTextures(), m_activeDrawCallState.materialData.getColorTexture().getImageHash());
         const bool noteConstants = logChangingVertexShaderConstants() &&
-          (logChangingVertexShaderConstantsTextures().empty() ||
-           lookupHash(logChangingVertexShaderConstantsTextures(), m_activeDrawCallState.materialData.getColorTexture().getImageHash()));
+          (logChangingVertexShaderConstantsTextures().empty() || watched);
         const bool settleConstants = vertexCaptureConstantTolerance() > 0.f;
         if (noteConstants || settleConstants) {
           const XXH64_hash_t drawKey = vertexShaderDrawKey(geoData);
@@ -397,7 +411,8 @@ namespace dxvk {
             noteVertexShaderConstants(drawKey, usedConstants);
           }
           if (settleConstants) {
-            vertexShaderHash = settleVertexShaderConstants(drawKey, *pVertexShader, usedConstants, vertexShaderHash);
+            vertexShaderHash = settleVertexShaderConstants(drawKey, *pVertexShader, usedConstants, vertexShaderHash,
+                                                           watched ? &geoData : nullptr);
           }
         }
         vertexShaderHash = XXH3_64bits_withSeed(&d3d9State().vsConsts.iConsts[0], cb.meta.maxConstIndexI * sizeof(int) * 4, vertexShaderHash);
