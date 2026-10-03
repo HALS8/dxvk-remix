@@ -62,6 +62,7 @@ struct AssetReplacement;
 struct AssetReplacer;
 class OpacityMicromapManager;
 class TerrainBaker;
+class TerrainLayers;
 class WeatherBlender;
 
 // The resource cache can be *searched* by other users
@@ -210,6 +211,7 @@ public:
   GraphManager& getGraphManager() { return m_graphManager; }
   std::unique_ptr<AssetReplacer>& getAssetReplacer() { return m_pReplacer; }
   TerrainBaker& getTerrainBaker() { return *m_terrainBaker.get(); }
+  TerrainLayers& getTerrainLayers() { return *m_terrainLayers.get(); }
 
   WeatherBlender* getWeatherBlender() const { return m_weatherBlender.get(); }
 
@@ -474,6 +476,7 @@ private:
   std::unique_ptr<AssetReplacer> m_pReplacer;
 
   std::unique_ptr<TerrainBaker> m_terrainBaker;
+  std::unique_ptr<TerrainLayers> m_terrainLayers;
 
   FogState m_fog;
   fast_unordered_cache<FogState> m_fogStates;

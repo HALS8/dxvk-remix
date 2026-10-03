@@ -36,6 +36,7 @@
 #include "rtx_options.h"
 #include "rtx_preserved_object_picking.h"
 #include "rtx_terrain_baker.h"
+#include "rtx_terrain_layers.h"
 #include "rtx_texture_manager.h"
 #include "rtx_texture.h"
 #include "rtx_xess.h"
@@ -148,6 +149,7 @@ namespace dxvk {
     , m_bindlessResourceManager(device)
     , m_pReplacer(new AssetReplacer())
     , m_terrainBaker(new TerrainBaker())
+    , m_terrainLayers(new TerrainLayers())
     , m_cameraManager(device)
     , m_uniqueObjectSearchDistance(RtxOptions::uniqueObjectDistance()) {
     InstanceEventHandler instanceEvents(this);
@@ -791,6 +793,7 @@ namespace dxvk {
     }
 
     m_terrainBaker->onFrameEnd(ctx);
+    m_terrainLayers->onFrameEnd();
 
     if (m_opacityMicromapManager) {
       m_opacityMicromapManager->onFrameEnd();

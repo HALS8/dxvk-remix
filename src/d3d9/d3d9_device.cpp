@@ -2004,6 +2004,11 @@ namespace dxvk {
       return D3D_OK;
     }
 
+    if (unlikely(D3D9Rtx::IsTerrainLayerState(static_cast<uint32_t>(State)))) {
+      m_rtx.SetTerrainLayerState(static_cast<uint32_t>(State), Value);
+      return D3D_OK;
+    }
+
     // D3D9 only allows reading for values 0 and 7-255 so we don't need to do anything but return OK
     if (unlikely(State > 255 || (State < D3DRS_ZENABLE && State != 0))) {
       return D3D_OK;
@@ -2349,6 +2354,11 @@ namespace dxvk {
 
     if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_ALBEDO_TINT)) {
       *pValue = m_rtx.GetAlbedoTint();
+      return D3D_OK;
+    }
+
+    if (unlikely(D3D9Rtx::IsTerrainLayerState(static_cast<uint32_t>(State)))) {
+      *pValue = m_rtx.GetTerrainLayerState(static_cast<uint32_t>(State));
       return D3D_OK;
     }
 
@@ -7926,6 +7936,7 @@ namespace dxvk {
     m_rtx.SetSuppressedCategories(0);
     m_rtx.SetForcedCategories(0);
     m_rtx.SetAlbedoTint(REMIXAPI_D3D9_ALBEDO_TINT_NONE);
+    m_rtx.ResetTerrainLayerStates();
 
     return D3D_OK;
   }

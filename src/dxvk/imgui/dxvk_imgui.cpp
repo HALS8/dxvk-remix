@@ -48,6 +48,7 @@
 #include "rtx_render/rtx_hash_collision_detection.h"
 #include "rtx_render/rtx_options.h"
 #include "rtx_render/rtx_terrain_baker.h"
+#include "rtx_render/rtx_terrain_layers.h"
 #include "rtx_render/rtx_neural_radiance_cache.h"
 #include "rtx_render/rtx_nsight_capture.h"
 #include "rtx_render/rtx_ray_reconstruction.h"
@@ -4237,6 +4238,8 @@ namespace dxvk {
       }
 
       RemixGui::Separator();
+
+      common->getSceneManager().getTerrainLayers().showImguiSettings();
 
       if (TerrainBaker::enableBaking()) {
         common->getTerrainBaker().showImguiSettings();

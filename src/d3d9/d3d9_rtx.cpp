@@ -887,6 +887,7 @@ namespace dxvk {
     // Fetch all the legacy state (colour modes, alpha test, etc...)
     setLegacyMaterialState(m_parent, m_parent->m_alphaSwizzleRTs & (1 << kRenderTargetIndex), m_activeDrawCallState.materialData);
     m_activeDrawCallState.materialData.isAlbedoTintMaskedByAlpha = m_albedoTintMaskedByAlpha;
+    setTerrainLayerState();
 
     // Fetch fog state 
     setFogState(m_parent, m_activeDrawCallState.fogState);
@@ -975,6 +976,96 @@ namespace dxvk {
   void D3D9Rtx::SetForcedCategories(uint32_t flags) {
     m_forcedCategoryBits = flags;
     m_forcedCategories = fork_hooks::toRtCategories(flags);
+  }
+
+  bool D3D9Rtx::IsTerrainLayerState(uint32_t state) {
+    static_assert(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE - REMIXAPI_D3D9_RS_TERRAIN_LAYER + 1 == kTerrainLayerStateCount);
+    return state - REMIXAPI_D3D9_RS_TERRAIN_LAYER < kTerrainLayerStateCount;
+  }
+
+  void D3D9Rtx::SetTerrainLayerState(uint32_t state, uint32_t value) {
+    m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER] = value;
+  }
+
+  uint32_t D3D9Rtx::GetTerrainLayerState(uint32_t state) const {
+    return m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
+  }
+
+  Rc<DxvkSampler> D3D9Rtx::getStageSampler(uint32_t stage) {
+    const D3D9SamplerKey key = m_parent->CreateSamplerKey(stage);
+    const XXH64_hash_t samplerHash = D3D9SamplerKeyHash{}(key);
+
+    const auto samplerIt = m_samplerCache.find(samplerHash);
+    if (samplerIt != m_samplerCache.end()) {
+      return samplerIt->second;
+    }
+
+    Rc<DxvkSampler> sampler = m_parent->GetDXVKDevice()->createSampler(m_parent->DecodeSamplerKey(key));
+    m_samplerCache.insert(std::make_pair(samplerHash, sampler));
+    return sampler;
+  }
+
+  void D3D9Rtx::setTerrainLayerState() {
+    TerrainLayerDraw& layer = m_activeDrawCallState.terrainLayer;
+    layer = {};
+
+    const auto state = [this](uint32_t renderState) {
+      return m_terrainLayerStates[renderState - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
+    };
+    const auto floatState = [&state](uint32_t renderState) {
+      const uint32_t bits = state(renderState);
+      float value;
+      memcpy(&value, &bits, sizeof(value));
+      return value;
+    };
+    const auto stageTexture = [this](uint32_t stage) -> D3D9CommonTexture* {
+      IDirect3DBaseTexture9* texture = d3d9State().textures[stage];
+      return texture != nullptr && texture->GetType() == D3DRTYPE_TEXTURE ? GetCommonTexture(texture) : nullptr;
+    };
+
+    const uint32_t description = state(REMIXAPI_D3D9_RS_TERRAIN_LAYER);
+    if (!(description & REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE)) {
+      return;
+    }
+
+    const uint32_t colorStage = (description >> REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_STAGE_SHIFT) & REMIXAPI_D3D9_TERRAIN_LAYER_STAGE_MASK;
+    D3D9CommonTexture* colorTexture = stageTexture(colorStage);
+    if (colorTexture == nullptr) {
+      ONCE(Logger::warn("[RTX Terrain Layers] A draw described as a terrain layer has no 2D texture on its colour stage. Such draws are not treated as layers."));
+      return;
+    }
+
+    if (description & REMIXAPI_D3D9_TERRAIN_LAYER_HAS_MASK) {
+      const uint32_t maskStage = (description >> REMIXAPI_D3D9_TERRAIN_LAYER_MASK_STAGE_SHIFT) & REMIXAPI_D3D9_TERRAIN_LAYER_STAGE_MASK;
+      D3D9CommonTexture* maskTexture = stageTexture(maskStage);
+      if (maskTexture == nullptr) {
+        ONCE(Logger::warn("[RTX Terrain Layers] A draw described as a masked terrain layer has no 2D texture on its mask stage. Such draws are not treated as layers."));
+        return;
+      }
+      layer.maskTexture = TextureRef(maskTexture->GetSampleView(false));
+    }
+
+    const bool srgb = d3d9State().samplerStates[colorStage][D3DSAMP_SRGBTEXTURE] & 0x1;
+    layer.colorTexture = TextureRef(colorTexture->GetSampleView(srgb));
+    layer.colorSampler = getStageSampler(colorStage);
+
+    // D3D9 extends a two-component texture coordinate to (u, v, 1, 0) before the stage's matrix.
+    if ((d3d9State().textureStages[colorStage][DXVK_TSS_TEXTURETRANSFORMFLAGS] & 0x3) != D3DTTFF_DISABLE) {
+      const Matrix4& m = d3d9State().transforms[GetTransformIndex(D3DTS_TEXTURE0) + colorStage];
+      layer.texcoordU = Vector3(m[0][0], m[1][0], m[2][0]);
+      layer.texcoordV = Vector3(m[0][1], m[1][1], m[2][1]);
+    }
+
+    layer.projection = static_cast<TerrainLayerDraw::Projection>(
+      std::min((description >> REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_SHIFT) & REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_MASK,
+               REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_ZY));
+    layer.colorAlphaInCoverage = description & REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE;
+    layer.alphaReference = static_cast<float>((description >> REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT) & 0xFF) / 255.f;
+    layer.projectionOrigin = Vector3(floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X),
+                                     floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y),
+                                     floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z));
+    layer.maskScale = floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE);
+    layer.enabled = true;
   }
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {
@@ -1309,23 +1400,10 @@ namespace dxvk {
         m_activeDrawCallState.materialData.colorTextureStage = stage;
       }
 
-      D3D9SamplerKey key = m_parent->CreateSamplerKey(stage);
-      XXH64_hash_t samplerHash = D3D9SamplerKeyHash{}(key);
-
-      Rc<DxvkSampler> sampler;
-      auto samplerIt = m_samplerCache.find(samplerHash);
-      if (samplerIt != m_samplerCache.end()) {
-        sampler = samplerIt->second;
-      } else {
-        const auto samplerInfo = m_parent->DecodeSamplerKey(key);
-        sampler = m_parent->GetDXVKDevice()->createSampler(samplerInfo);
-        m_samplerCache.insert(std::make_pair(samplerHash, sampler));
-      }
-
       // Cache the slot we want to bind
       const bool srgb = d3d9State().samplerStates[stage][D3DSAMP_SRGBTEXTURE] & 0x1;
       m_activeDrawCallState.materialData.colorTextures[textureID] = TextureRef(pTexInfo->GetSampleView(srgb));
-      m_activeDrawCallState.materialData.samplers[textureID] = sampler;
+      m_activeDrawCallState.materialData.samplers[textureID] = getStageSampler(stage);
 
       auto shaderSampler = RemapStateSamplerShader(stage);
       m_activeDrawCallState.materialData.colorTextureSlot[textureID] = computeResourceSlotId(shaderSampler.first, DxsoBindingType::Image, uint32_t(shaderSampler.second));

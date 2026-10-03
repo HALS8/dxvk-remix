@@ -373,6 +373,8 @@ dxvk_src = files([
   'rtx_render/rtx_taa.h',
   'rtx_render/rtx_terrain_baker.cpp',
   'rtx_render/rtx_terrain_baker.h',
+  'rtx_render/rtx_terrain_layers.cpp',
+  'rtx_render/rtx_terrain_layers.h',
   'rtx_render/rtx_texture.cpp',
   'rtx_render/rtx_texture.h',
   'rtx_render/rtx_texture_manager.cpp',

@@ -582,6 +582,60 @@ extern "C" {
   #define REMIXAPI_D3D9_ALBEDO_TINT_NONE 0u
   #define REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA 1u
 
+  // D3D9 per-draw terrain layer description.
+  //
+  // Some games draw terrain as a stack of layers over shared chunk geometry: every layer is its
+  // own fixed-function draw of the chunk's vertex buffer, binding a tiling colour texture whose
+  // coordinates are a planar projection of the vertex position, and -- for every layer but the
+  // first -- a coverage mask that spans the chunk once. The layers composite in submission order
+  // with SRCALPHA/INVSRCALPHA blending and an alpha test. A caller that can identify such draws
+  // describes each one with the render states below, so the layers can be evaluated per ray hit
+  // from the game's own textures instead of from a resampled bake.
+  //
+  // REMIXAPI_D3D9_RS_TERRAIN_LAYER packs the description; 0 marks a draw that is not a layer:
+  //
+  //   bit  0       REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE
+  //   bits 1-3     texture stage holding the layer's colour texture. Its sampler state and its
+  //                D3DTS_TEXTUREn matrix (when D3DTSS_TEXTURETRANSFORMFLAGS enables one) are read
+  //                from that stage.
+  //   bit  4       REMIXAPI_D3D9_TERRAIN_LAYER_HAS_MASK: the layer has a coverage mask, read
+  //                from the alpha channel of the texture on the stage in bits 5-7. A layer
+  //                without a mask covers its triangles completely.
+  //   bits 5-7     texture stage holding the coverage mask
+  //   bits 8-9     which two object-space position components the colour texture is projected
+  //                from, a REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_* value
+  //   bit  10      REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE: coverage is the mask
+  //                times the colour texture's alpha
+  //   bits 16-23   alpha reference: coverage not greater than this (out of 255) is no coverage
+  //
+  // The projected position is (object-space position + origin), with the origin given as three
+  // IEEE-754 float bit patterns in REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X/Y/Z. The mask is
+  // projected from the object-space XZ position (no origin) scaled by the float in
+  // REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE, giving 0..1 across the chunk.
+  //
+  //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_TERRAIN_LAYER,
+  //                          REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE | (colorStage << 1) | ...);
+  //
+  // Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y 0x52584306u
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z 0x52584307u
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE 0x52584308u
+
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE 0x1u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_STAGE_SHIFT 1u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_HAS_MASK 0x10u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_MASK_STAGE_SHIFT 5u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_STAGE_MASK 0x7u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_SHIFT 8u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_MASK 0x3u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_XZ 0u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_XY 1u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_ZY 2u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE 0x400u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT 16u
+
 
   typedef struct remixapi_AnimatedFloat1D {
     float*     pData;

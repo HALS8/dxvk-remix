@@ -614,6 +614,35 @@ struct DrawCallTransforms {
   }
 };
 
+// A draw the game issues as one layer of a layered terrain chunk, as described through
+// REMIXAPI_D3D9_RS_TERRAIN_LAYER (remix_c.h).
+struct TerrainLayerDraw {
+  // The two object-space position components the colour texture is projected from.
+  enum class Projection : uint8_t {
+    XZ = 0,
+    XY,
+    ZY
+  };
+
+  bool enabled = false;
+  Projection projection = Projection::XZ;
+  bool colorAlphaInCoverage = false;
+  // Coverage not greater than this is no coverage.
+  float alphaReference = 0.f;
+  // Added to the object-space position before the colour projection.
+  Vector3 projectionOrigin = Vector3(0.f);
+  // Object-space XZ position times this is the mask texcoord.
+  float maskScale = 0.f;
+  // Colour texcoord = (dot(p, texcoordU), dot(p, texcoordV)) for the projected position p = (a, b, 1).
+  Vector3 texcoordU = Vector3(1.f, 0.f, 0.f);
+  Vector3 texcoordV = Vector3(0.f, 1.f, 0.f);
+
+  TextureRef colorTexture;
+  Rc<DxvkSampler> colorSampler;
+  // Invalid for a layer that covers its triangles completely.
+  TextureRef maskTexture;
+};
+
 struct FogState {
   uint32_t mode = D3DFOG_NONE;
   Vector3 color = Vector3();
@@ -727,6 +756,10 @@ struct DrawCallState {
 
   const FogState& getFogState() const {
     return fogState;
+  }
+
+  const TerrainLayerDraw& getTerrainLayer() const {
+    return terrainLayer;
   }
 
   const CategoryFlags getCategoryFlags() const {
@@ -893,6 +926,8 @@ private:
   Future<SkinningData> futureSkinningData;
 
   FogState fogState;
+
+  TerrainLayerDraw terrainLayer;
 
   CategoryFlags categories = 0;
 

@@ -251,6 +251,28 @@ namespace dxvk {
       return m_albedoTint;
     }
 
+    /**
+      * rief: Whether a render state is one of the REMIXAPI_D3D9_RS_TERRAIN_LAYER* states,
+      *         see remix_c.h.
+      */
+    static bool IsTerrainLayerState(uint32_t state);
+
+    /**
+      * rief: Sets one of the states describing following draw calls as terrain layers.
+      *
+      * \param [in] state: a REMIXAPI_D3D9_RS_TERRAIN_LAYER* render state
+      * \param [in] value: its value, as documented in remix_c.h
+      */
+    void SetTerrainLayerState(uint32_t state, uint32_t value);
+    uint32_t GetTerrainLayerState(uint32_t state) const;
+
+    /**
+      * \brief: Clears the terrain layer description, so following draw calls are not layers.
+      */
+    void ResetTerrainLayerStates() {
+      m_terrainLayerStates.fill(0);
+    }
+
   private: 
     // Reused fixed-size blocks: once allocated, a block is never reallocated, so background
     // skinning can keep raw Matrix4* into a prior copy. m_blocks can grow, but the heap
@@ -304,6 +326,16 @@ namespace dxvk {
     CategoryFlags m_forcedCategories = 0;
     uint32_t m_albedoTint = 0;
     bool m_albedoTintMaskedByAlpha = false;
+
+    // REMIXAPI_D3D9_RS_TERRAIN_LAYER and the states after it, in their numeric order.
+    static constexpr uint32_t kTerrainLayerStateCount = 5;
+    std::array<uint32_t, kTerrainLayerStateCount> m_terrainLayerStates = {};
+
+    // Describes the active draw call as a terrain layer from m_terrainLayerStates and the
+    // texture stages they name.
+    void setTerrainLayerState();
+
+    Rc<DxvkSampler> getStageSampler(uint32_t stage);
 
     int m_activeOcclusionQueries = 0;
 

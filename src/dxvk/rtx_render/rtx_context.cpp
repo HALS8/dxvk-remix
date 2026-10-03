@@ -35,6 +35,7 @@
 #include "rtx_opacity_micromap_manager.h"
 #include "rtx_asset_replacer.h"
 #include "rtx_terrain_baker.h"
+#include "rtx_terrain_layers.h"
 #include "rtx_texture_manager.h"
 #include "rtx_neural_radiance_cache.h"
 #include "rtx_sharc.h"
@@ -1044,6 +1045,9 @@ namespace dxvk {
       if (tryHandleSky(&params, &drawCallState) == TryHandleSkyResult::SkipSubmit) {
         return;
       }
+
+      // Before the bake, which overrides the layer's material with the baked one.
+      getSceneManager().getTerrainLayers().addLayerDraw(getSceneManager(), drawCallState);
 
       // Bake the terrain
       const MaterialData* overrideMaterialData = nullptr;
