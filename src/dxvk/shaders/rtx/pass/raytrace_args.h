@@ -99,8 +99,8 @@ struct TerrainArgs {
 // Layered terrain: the chunks whose layers are evaluated at a hit, and their layers in the order
 // the game composites them. Texture and sampler indices are 16 bit, BINDING_INDEX_INVALID where
 // a layer has no such texture.
-static const uint kMaxTerrainLayerChunks = 12;
-static const uint kMaxTerrainLayers = 160;
+static const uint kMaxTerrainLayerChunks = 32;
+static const uint kMaxTerrainLayers = 384;
 static const uint kMaxTerrainLayersBlended = 4;
 
 // TerrainLayer::flags
