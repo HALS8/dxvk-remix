@@ -96,6 +96,59 @@ struct TerrainArgs {
   mat4 sideProjectionWorldToTexture[kMaxTerrainSideProjectionLevels * kNumTerrainSideProjectionViews];
 };
 
+// Layered terrain: the chunks whose layers are evaluated at a hit, and their layers in the order
+// the game composites them. Texture and sampler indices are 16 bit, BINDING_INDEX_INVALID where
+// a layer has no such texture.
+static const uint kMaxTerrainLayerChunks = 12;
+static const uint kMaxTerrainLayers = 160;
+static const uint kMaxTerrainLayersBlended = 4;
+
+// TerrainLayer::flags
+#define TERRAIN_LAYER_ALPHA_REFERENCE_MASK 0xFFu          // coverage not greater than this / 255 is none
+#define TERRAIN_LAYER_ROUGHNESS_SHIFT 8u                  // roughness constant * 255
+#define TERRAIN_LAYER_METALLIC_SHIFT 16u                  // metallic constant * 255
+#define TERRAIN_LAYER_PROJECTION_SHIFT 24u                // 0: XZ, 1: XY, 2: ZY of the object-space position
+#define TERRAIN_LAYER_PROJECTION_MASK 0x3u
+#define TERRAIN_LAYER_FLAG_HAS_MASK (1u << 26)
+#define TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE (1u << 27)
+#define TERRAIN_LAYER_FLAG_COLOR_IS_LINEAR (1u << 28)     // the sampler linearises the colour texture
+
+struct TerrainLayer {
+  // Colour texcoord = (dot(p, texcoordU), dot(p, texcoordV)) for the projected position p = (a, b, 1)
+  vec3 texcoordU;
+  uint colorAndNormalTextureIndex;
+
+  vec3 texcoordV;
+  uint roughnessAndMetallicTextureIndex;
+
+  uint maskTextureAndSamplerIndex;    // The sampler is the colour texture's
+  uint flags;
+  uint pad0;
+  uint pad1;
+};
+
+struct TerrainLayerChunk {
+  mat4 worldToObject;
+
+  vec3 projectionOrigin;    // Added to the object-space position before a colour projection
+  float maskScale;          // Object-space XZ position times this is the mask texcoord, 0..1 over the chunk
+
+  uint firstLayer;
+  uint layerCount;
+  uint pad0;
+  uint pad1;
+};
+
+struct TerrainLayerArgs {
+  uint chunkCount;          // 0: terrain is read from the cascade alone
+  uint maskSamplerIndex;
+  float minBlendWeight;     // Layers weighing less are not sampled
+  uint pad0;
+
+  TerrainLayerChunk chunks[kMaxTerrainLayerChunks];
+  TerrainLayer layers[kMaxTerrainLayers];
+};
+
 struct NeeCacheArgs {
   uint enable;
   uint enableImportanceSampling;
@@ -193,6 +246,7 @@ struct RaytraceArgs {
   LightRangeInfo lightRanges[lightTypeCount];
 
   TerrainArgs terrainArgs;
+  TerrainLayerArgs terrainLayerArgs;
   NeeCacheArgs neeCacheArgs;
   DomeLightArgs domeLightArgs;
   NrcArgs nrcArgs;

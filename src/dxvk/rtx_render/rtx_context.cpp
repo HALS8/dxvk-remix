@@ -1047,7 +1047,7 @@ namespace dxvk {
       }
 
       // Before the bake, which overrides the layer's material with the baked one.
-      getSceneManager().getTerrainLayers().addLayerDraw(getSceneManager(), drawCallState);
+      getSceneManager().getTerrainLayers().addLayerDraw(*this, drawCallState);
 
       // Bake the terrain
       const MaterialData* overrideMaterialData = nullptr;
@@ -1305,6 +1305,7 @@ namespace dxvk {
       rtOutput.m_compositeOutputExtent.height / static_cast<float>(rtOutput.m_finalOutputExtent.height) };
 
     constants.terrainArgs = getSceneManager().getTerrainBaker().getTerrainArgs();
+    constants.terrainLayerArgs = getSceneManager().getTerrainLayers().getTerrainLayerArgs();
 
     constants.sssArgs.enableThinOpaque = RtxOptions::SubsurfaceScattering::enableThinOpaque();
     constants.sssArgs.enableDiffusionProfile = RtxOptions::SubsurfaceScattering::enableDiffusionProfile();

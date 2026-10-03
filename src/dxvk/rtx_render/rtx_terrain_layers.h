@@ -14,9 +14,11 @@
 
 #include "rtx_option.h"
 #include "rtx_types.h"
+#include "rtx/pass/raytrace_args.h"
 
 namespace dxvk {
 
+  class RtxContext;
   class SceneManager;
 
   class TerrainLayers {
@@ -24,6 +26,12 @@ namespace dxvk {
     RTX_OPTION("rtx.terrainLayers", bool, enable, false,
                "Collects the draws a game describes as terrain layers (REMIXAPI_D3D9_RS_TERRAIN_LAYER) into a per-chunk\n"
                "layer table each frame, and keeps the layers' textures resident.");
+    RTX_OPTION("rtx.terrainLayers", bool, evaluateAtHit, true,
+               "Terrain over a collected chunk takes albedo, normal, roughness and metalness from the chunk's layers,\n"
+               "each sampled at its own resolution through its own projection and blended by the game's coverage masks.\n"
+               "Off, terrain reads the baked cascade alone. Requires rtx.terrainLayers.enable and the terrain baker.");
+    RTX_OPTION("rtx.terrainLayers", float, minBlendWeight, 0.02f,
+               "Layers whose composited weight at a hit is below this are not sampled.");
     RTX_OPTION("rtx.terrainLayers", bool, logSummary, false,
                "Logs, every 600 frames, the size of the terrain layer table and what was left out of it.");
 
@@ -33,6 +41,10 @@ namespace dxvk {
       TerrainLayerDraw draw;
       // Null for a layer evaluated from the game's own colour texture.
       std::shared_ptr<MaterialData> replacement;
+
+      bool colorIsLinear = false;
+      float roughnessConstant = 0.f;
+      float metallicConstant = 0.f;
 
       uint32_t colorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
       uint32_t colorSamplerIndex = kSurfaceMaterialInvalidTextureIndex;
@@ -51,17 +63,22 @@ namespace dxvk {
       std::vector<Layer> layers;
     };
 
-    static constexpr size_t kMaxChunks = 64;
-    static constexpr size_t kMaxLayersPerChunk = 32;
+    static constexpr size_t kMaxChunks = kMaxTerrainLayerChunks;
+    static constexpr size_t kMaxLayers = kMaxTerrainLayers;
 
     /**
       * \brief: Appends a draw to its chunk's layer list and tracks its textures for this frame.
       *         Does nothing for a draw that is not described as a terrain layer.
       *
-      * \param [in] sceneManager: tracks the layer's textures and finds its replacement material
+      * \param [in] ctx: tracks the layer's textures and finds its replacement material
       * \param [in] drawCallState: the draw, before the terrain baker overrides its material
       */
-    void addLayerDraw(SceneManager& sceneManager, const DrawCallState& drawCallState);
+    void addLayerDraw(RtxContext& ctx, const DrawCallState& drawCallState);
+
+    /**
+      * \brief: The table as the shaders read it. Empty unless the layers are evaluated at a hit.
+      */
+    TerrainLayerArgs getTerrainLayerArgs() const;
 
     void onFrameEnd();
 
@@ -91,6 +108,9 @@ namespace dxvk {
     Statistics m_statistics;
     // The last completed frame's, for display.
     Statistics m_shownStatistics;
+    uint32_t m_layerCount = 0;
+    Rc<DxvkSampler> m_maskSampler;
+    uint32_t m_maskSamplerIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t m_framesSinceLog = 0;
   };
 

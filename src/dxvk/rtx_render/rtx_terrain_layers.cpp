@@ -1,6 +1,8 @@
 #include "rtx_terrain_layers.h"
 
 #include "rtx_asset_replacer.h"
+#include "rtx_context.h"
+#include "rtx_texture.h"
 #include "rtx_scene_manager.h"
 #include "rtx_imgui.h"
 
@@ -38,13 +40,27 @@ namespace dxvk {
     track(layer.draw.maskTexture, layer.maskTextureIndex);
     layer.colorSamplerIndex = sceneManager.trackSampler(layer.draw.colorSampler);
 
+    const auto samplerLinearises = [](const TextureRef& texture) {
+      const DxvkImageView* view = texture.getImageView();
+      return RtxOptions::linearizeSrgbTextures() && view != nullptr && TextureUtils::isSRGB(view->info().format);
+    };
+
+    layer.colorIsLinear = samplerLinearises(layer.draw.colorTexture);
+    layer.roughnessConstant = LegacyMaterialDefaults::roughnessConstant();
+    layer.metallicConstant = LegacyMaterialDefaults::metallicConstant();
+
     if (layer.replacement == nullptr) {
       track(layer.draw.colorTexture, layer.colorTextureIndex);
       return;
     }
 
     OpaqueMaterialData& material = layer.replacement->getOpaqueMaterialData();
+    layer.roughnessConstant = material.getRoughnessConstant();
+    layer.metallicConstant = material.getMetallicConstant();
     track(material.getAlbedoOpacityTexture(), layer.colorTextureIndex);
+    if (layer.colorTextureIndex != kSurfaceMaterialInvalidTextureIndex) {
+      layer.colorIsLinear = samplerLinearises(material.getAlbedoOpacityTexture());
+    }
     track(material.getNormalTexture(), layer.normalTextureIndex);
     track(material.getRoughnessTexture(), layer.roughnessTextureIndex);
     track(material.getMetallicTexture(), layer.metallicTextureIndex);
@@ -57,16 +73,26 @@ namespace dxvk {
     }
   }
 
-  void TerrainLayers::addLayerDraw(SceneManager& sceneManager, const DrawCallState& drawCallState) {
+  void TerrainLayers::addLayerDraw(RtxContext& ctx, const DrawCallState& drawCallState) {
     if (!enable() || !drawCallState.getTerrainLayer().enabled) {
       return;
     }
 
-    Chunk* chunk = findOrAddChunk(drawCallState.getTransformData().objectToWorld);
-    if (chunk == nullptr || chunk->layers.size() == kMaxLayersPerChunk) {
+    SceneManager& sceneManager = ctx.getSceneManager();
+
+    // The layer limit is checked first, so a chunk is never added without a layer.
+    Chunk* chunk = m_layerCount < kMaxLayers ? findOrAddChunk(drawCallState.getTransformData().objectToWorld) : nullptr;
+    if (chunk == nullptr) {
       m_statistics.droppedLayers++;
       return;
     }
+    m_layerCount++;
+
+    // Masks span their chunk once and are magnified, so one clamped bilinear sampler serves all.
+    if (m_maskSampler == nullptr) {
+      m_maskSampler = ctx.getResourceManager().getSampler(VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+    }
+    m_maskSamplerIndex = sceneManager.trackSampler(m_maskSampler);
 
     Layer& layer = chunk->layers.emplace_back();
     layer.draw = drawCallState.getTerrainLayer();
@@ -84,6 +110,58 @@ namespace dxvk {
     m_statistics.maskedLayers += layer.draw.maskTexture.isValid();
     m_statistics.replacedLayers += layer.replacement != nullptr;
     m_statistics.sideProjectedLayers += layer.draw.projection != TerrainLayerDraw::Projection::XZ;
+  }
+
+  TerrainLayerArgs TerrainLayers::getTerrainLayerArgs() const {
+    TerrainLayerArgs args = {};
+    if (!enable() || !evaluateAtHit()) {
+      return args;
+    }
+
+    const auto pack16 = [](uint32_t low, uint32_t high) {
+      return (low & 0xFFFFu) | (high << 16);
+    };
+    const auto unorm8 = [](float value) {
+      return static_cast<uint32_t>(std::clamp(value, 0.f, 1.f) * 255.f + 0.5f);
+    };
+
+    args.maskSamplerIndex = m_maskSamplerIndex;
+    args.minBlendWeight = minBlendWeight();
+
+    uint32_t layerCount = 0;
+    for (const Chunk& chunk : m_chunks) {
+      const TerrainLayerDraw& first = chunk.layers.front().draw;
+
+      TerrainLayerChunk& gpuChunk = args.chunks[args.chunkCount++];
+      gpuChunk.worldToObject = inverse(chunk.objectToWorld);
+      gpuChunk.projectionOrigin = first.projectionOrigin;
+      gpuChunk.maskScale = first.maskScale;
+      gpuChunk.firstLayer = layerCount;
+      gpuChunk.layerCount = static_cast<uint32_t>(chunk.layers.size());
+
+      for (const Layer& layer : chunk.layers) {
+        TerrainLayer& gpuLayer = args.layers[layerCount++];
+        gpuLayer.texcoordU = layer.draw.texcoordU;
+        gpuLayer.texcoordV = layer.draw.texcoordV;
+        gpuLayer.colorAndNormalTextureIndex = pack16(layer.colorTextureIndex, layer.normalTextureIndex);
+        gpuLayer.roughnessAndMetallicTextureIndex = pack16(layer.roughnessTextureIndex, layer.metallicTextureIndex);
+        gpuLayer.maskTextureAndSamplerIndex = pack16(layer.maskTextureIndex, layer.colorSamplerIndex);
+
+        // A layer whose mask is not resident yet is left covering nothing rather than everything.
+        const bool hasMask = layer.draw.maskTexture.isValid();
+        const bool maskMissing = hasMask && layer.maskTextureIndex == kSurfaceMaterialInvalidTextureIndex;
+        gpuLayer.flags =
+          (maskMissing ? 0xFFu : unorm8(layer.draw.alphaReference)) |
+          (unorm8(layer.roughnessConstant) << TERRAIN_LAYER_ROUGHNESS_SHIFT) |
+          (unorm8(layer.metallicConstant) << TERRAIN_LAYER_METALLIC_SHIFT) |
+          (static_cast<uint32_t>(layer.draw.projection) << TERRAIN_LAYER_PROJECTION_SHIFT) |
+          (hasMask ? TERRAIN_LAYER_FLAG_HAS_MASK : 0u) |
+          (layer.draw.colorAlphaInCoverage ? TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE : 0u) |
+          (layer.colorIsLinear ? TERRAIN_LAYER_FLAG_COLOR_IS_LINEAR : 0u);
+      }
+    }
+
+    return args;
   }
 
   void TerrainLayers::onFrameEnd() {
@@ -109,11 +187,13 @@ namespace dxvk {
 
     m_chunks.clear();
     m_chunkIndexByTransform.clear();
+    m_layerCount = 0;
     m_statistics = {};
   }
 
   void TerrainLayers::showImguiSettings() const {
     RemixGui::Checkbox("Collect Terrain Layers", &enableObject());
+    RemixGui::Checkbox("Evaluate Terrain Layers at Hit", &evaluateAtHitObject());
     RemixGui::Checkbox("Log Terrain Layer Summary", &logSummaryObject());
 
     const Statistics& s = m_shownStatistics;

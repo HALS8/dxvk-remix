@@ -22,6 +22,7 @@
 #pragma once
 
 #include "opaque_surface_material_blending.slangh"
+#include "terrain_layers.slangh"
 
 // Opaque Surface Material Interaction Constants
 
@@ -666,6 +667,15 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   // Texture operations have already been applied during terrain baking, so skip them for baked terrain surfaces
   const bool applyTextureOperations = !isBakedTerrain;
 
+  // Terrain over a layered chunk takes its material from the chunk's layers; the cascade keeps
+  // supplying opacity, emission and displacement.
+  TerrainLayerBlend terrainLayerBlend;
+  terrainLayerBlend.valid = false;
+  if (isBakedTerrain && cb.terrainLayerArgs.chunkCount != 0)
+  {
+    terrainLayerBlend = terrainLayersEvaluate(surfaceInteraction, minimalRayInteraction);
+  }
+
   // Note: Set thin film thickness constant fallback only if the thin film is enabled as a non-zero value here is responsible for indicating
   // if the thin film is in use by later code.
   if (thinFilmEnabled)
@@ -800,6 +810,11 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     emissiveColor = gammaToLinear(emissiveColor);
   }
   
+  if (terrainLayerBlend.valid)
+  {
+    albedo = terrainLayerBlend.albedo;
+  }
+
   // Apply material modifiers/overrides
   albedo = saturate(albedo * cb.opaqueMaterialArgs.albedoScale + cb.opaqueMaterialArgs.albedoBias);
   
@@ -863,6 +878,12 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     storeColorOverlayedWithTextureResolutionCheckersInDebugView(normal, opaqueSurfaceMaterial.normalTextureIndex, surfaceInteraction);
   }
 #endif
+  if (terrainLayerBlend.valid)
+  {
+    normal = terrainLayerBlend.normal;
+    normalDetail = terrainLayerBlend.normalDetail;
+  }
+
   // Load Tangent
 
   // Todo
@@ -874,6 +895,11 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   if (roughnessLoaded)
   {
     roughness = roughnessSample.x;
+  }
+
+  if (terrainLayerBlend.valid)
+  {
+    roughness = terrainLayerBlend.roughness;
   }
 
 #if defined(RAY_TRACING_PRIMARY_RAY)
@@ -893,6 +919,11 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   if (metallicLoaded)
   {
     metallic = metallicSample.x;
+  }
+
+  if (terrainLayerBlend.valid)
+  {
+    metallic = terrainLayerBlend.metallic;
   }
     
   metallic = saturate(metallic * cb.opaqueMaterialArgs.metallicScale + cb.opaqueMaterialArgs.metallicBias);

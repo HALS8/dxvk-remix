@@ -1,0 +1,260 @@
+#pragma once
+
+// Layered terrain: evaluates a terrain chunk's layers at a hit from the game's own layer textures
+// and coverage masks (cb.terrainLayerArgs), in the order and with the blend the game composites
+// them in, instead of reading the resampled terrain cascade.
+//
+// A layer's coverage is its mask (times the colour texture's alpha where flagged), dropped when
+// not greater than the layer's alpha reference; each layer then composites over the ones before
+// it. The few layers left with a visible weight are sampled, each through its own planar
+// projection of the object-space position.
+
+struct TerrainLayerBlend
+{
+  bool valid;
+  // Linear.
+  vec3 albedo;
+  // World space.
+  vec3 normal;
+  float normalDetail;
+  float roughness;
+  float metallic;
+};
+
+// The colour texture coordinates of a layer and their footprint.
+struct TerrainLayerTexcoords
+{
+  vec2 texcoord;
+  vec2 gradientX;
+  vec2 gradientY;
+};
+
+vec2 terrainLayerProject(uint flags, vec3 v)
+{
+  const uint projection = (flags >> TERRAIN_LAYER_PROJECTION_SHIFT) & TERRAIN_LAYER_PROJECTION_MASK;
+  return projection == 0 ? v.xz : (projection == 1 ? v.xy : v.zy);
+}
+
+// The object-space direction a projected coordinate (a, b) increases along.
+vec3 terrainLayerUnproject(uint flags, vec2 v)
+{
+  const uint projection = (flags >> TERRAIN_LAYER_PROJECTION_SHIFT) & TERRAIN_LAYER_PROJECTION_MASK;
+  return projection == 0 ? vec3(v.x, 0, v.y) : (projection == 1 ? vec3(v.x, v.y, 0) : vec3(0, v.y, v.x));
+}
+
+TerrainLayerTexcoords terrainLayerTexcoords(
+  TerrainLayer layer, vec3 projectedPosition, vec3 objectEllipseAxis0, vec3 objectEllipseAxis1)
+{
+  const vec2 position = terrainLayerProject(layer.flags, projectedPosition);
+  const vec2 axis0 = terrainLayerProject(layer.flags, objectEllipseAxis0);
+  const vec2 axis1 = terrainLayerProject(layer.flags, objectEllipseAxis1);
+
+  TerrainLayerTexcoords texcoords;
+  texcoords.texcoord = vec2(dot(vec3(position, 1), layer.texcoordU), dot(vec3(position, 1), layer.texcoordV));
+  texcoords.gradientX = vec2(dot(axis0, layer.texcoordU.xy), dot(axis0, layer.texcoordV.xy));
+  texcoords.gradientY = vec2(dot(axis1, layer.texcoordU.xy), dot(axis1, layer.texcoordV.xy));
+  return texcoords;
+}
+
+vec4 terrainLayerRead(uint textureIndex, uint samplerIndex, TerrainLayerTexcoords texcoords)
+{
+  return textures[nonuniformEXT(textureIndex)].SampleGrad(
+    samplers[nonuniformEXT(samplerIndex)], texcoords.texcoord, texcoords.gradientX, texcoords.gradientY);
+}
+
+// Finds the chunk a world position lies over. A chunk covers 0..1 of its mask.
+bool terrainLayersFindChunk(vec3 position, out uint chunkIndex, out vec3 objectPosition, out vec2 maskTexcoord)
+{
+  chunkIndex = 0;
+  objectPosition = vec3(0);
+  maskTexcoord = vec2(0);
+
+  for (uint i = 0; i < cb.terrainLayerArgs.chunkCount; i++)
+  {
+    const vec3 candidate = mul(cb.terrainLayerArgs.chunks[i].worldToObject, vec4(position, 1.0)).xyz;
+    const vec2 texcoord = candidate.xz * cb.terrainLayerArgs.chunks[i].maskScale;
+
+    if (all(texcoord >= 0.0) && all(texcoord <= 1.0))
+    {
+      chunkIndex = i;
+      objectPosition = candidate;
+      maskTexcoord = texcoord;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, MinimalRayInteraction minimalRayInteraction)
+{
+  TerrainLayerBlend blend;
+  blend.valid = false;
+  blend.albedo = vec3(0);
+  blend.normal = surfaceInteraction.geometryNormal;
+  blend.normalDetail = 0;
+  blend.roughness = 0;
+  blend.metallic = 0;
+
+  uint chunkIndex;
+  vec3 objectPosition;
+  vec2 maskTexcoord;
+  if (!terrainLayersFindChunk(surfaceInteraction.position, chunkIndex, objectPosition, maskTexcoord))
+  {
+    return blend;
+  }
+
+  const TerrainLayerChunk chunk = cb.terrainLayerArgs.chunks[chunkIndex];
+  const mat3 worldToObject = mat3(chunk.worldToObject);
+  const vec3 projectedPosition = objectPosition + chunk.projectionOrigin;
+
+  // The ray cone's footprint on the surface, as two axes; see computeAnisotropicEllipseAxes.
+  const vec3 triangleNormal = surfaceInteraction.geometryNormal;
+  const vec3 coneDirection = -minimalRayInteraction.viewDirection;
+  vec3 ellipseAxis0 = coneDirection - dot(triangleNormal, coneDirection) * triangleNormal;
+  const vec3 planeProjection0 = ellipseAxis0 - dot(coneDirection, ellipseAxis0) * coneDirection;
+  ellipseAxis0 *= minimalRayInteraction.coneRadius / max(0.0001, length(planeProjection0));
+  vec3 ellipseAxis1 = cross(triangleNormal, ellipseAxis0);
+  const vec3 planeProjection1 = ellipseAxis1 - dot(coneDirection, ellipseAxis1) * coneDirection;
+  ellipseAxis1 *= minimalRayInteraction.coneRadius / max(0.0001, length(planeProjection1));
+  const vec3 objectEllipseAxis0 = mul(worldToObject, ellipseAxis0);
+  const vec3 objectEllipseAxis1 = mul(worldToObject, ellipseAxis1);
+
+  // Composite the coverage in submission order, keeping the layers that weigh the most.
+  uint keptLayer[kMaxTerrainLayersBlended];
+  float keptWeight[kMaxTerrainLayersBlended];
+  uint keptCount = 0;
+
+  for (uint i = 0; i < chunk.layerCount; i++)
+  {
+    const uint layerIndex = chunk.firstLayer + i;
+    const TerrainLayer layer = cb.terrainLayerArgs.layers[layerIndex];
+    const float alphaReference = float(layer.flags & TERRAIN_LAYER_ALPHA_REFERENCE_MASK) / 255.0;
+
+    float coverage = 1.0;
+    if (layer.flags & TERRAIN_LAYER_FLAG_HAS_MASK)
+    {
+      const uint maskTextureIndex = layer.maskTextureAndSamplerIndex & 0xFFFF;
+      coverage = textures[nonuniformEXT(maskTextureIndex)].SampleLevel(
+        samplers[nonuniformEXT(cb.terrainLayerArgs.maskSamplerIndex)], maskTexcoord, 0).a;
+
+      if ((layer.flags & TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE) && coverage > alphaReference)
+      {
+        coverage *= terrainLayerRead(layer.colorAndNormalTextureIndex & 0xFFFF, layer.maskTextureAndSamplerIndex >> 16,
+          terrainLayerTexcoords(layer, projectedPosition, objectEllipseAxis0, objectEllipseAxis1)).a;
+      }
+
+      if (coverage <= alphaReference)
+      {
+        continue;
+      }
+    }
+
+    uint lightest = 0;
+    for (uint k = 0; k < keptCount; k++)
+    {
+      keptWeight[k] *= 1.0 - coverage;
+      if (keptWeight[k] < keptWeight[lightest])
+      {
+        lightest = k;
+      }
+    }
+
+    if (keptCount < kMaxTerrainLayersBlended)
+    {
+      lightest = keptCount++;
+    }
+    else if (coverage <= keptWeight[lightest])
+    {
+      continue;
+    }
+
+    keptLayer[lightest] = layerIndex;
+    keptWeight[lightest] = coverage;
+  }
+
+  // Blend what is left.
+  const vec3 geometryNormal = surfaceInteraction.geometryNormal;
+  vec3 normal = vec3(0);
+  float totalWeight = 0;
+
+  for (uint k = 0; k < keptCount; k++)
+  {
+    const float weight = keptWeight[k];
+    if (weight < cb.terrainLayerArgs.minBlendWeight)
+    {
+      continue;
+    }
+
+    const TerrainLayer layer = cb.terrainLayerArgs.layers[keptLayer[k]];
+    const TerrainLayerTexcoords texcoords = terrainLayerTexcoords(layer, projectedPosition, objectEllipseAxis0, objectEllipseAxis1);
+    const uint samplerIndex = layer.maskTextureAndSamplerIndex >> 16;
+    const uint colorTextureIndex = layer.colorAndNormalTextureIndex & 0xFFFF;
+    const uint normalTextureIndex = layer.colorAndNormalTextureIndex >> 16;
+    const uint roughnessTextureIndex = layer.roughnessAndMetallicTextureIndex & 0xFFFF;
+    const uint metallicTextureIndex = layer.roughnessAndMetallicTextureIndex >> 16;
+
+    vec3 albedo = vec3(1);
+    if (colorTextureIndex != uint(BINDING_INDEX_INVALID))
+    {
+      albedo = terrainLayerRead(colorTextureIndex, samplerIndex, texcoords).rgb;
+    }
+    if (!(layer.flags & TERRAIN_LAYER_FLAG_COLOR_IS_LINEAR))
+    {
+      albedo = gammaToLinear(albedo);
+    }
+
+    vec3 layerNormal = geometryNormal;
+    if (normalTextureIndex != uint(BINDING_INDEX_INVALID))
+    {
+      const vec3 tangentNormal = unsignedOctahedralToHemisphereDirection(
+        terrainLayerRead(normalTextureIndex, samplerIndex, texcoords).xy, cb.opaqueMaterialArgs.normalIntensity);
+
+      // The layer's tangent frame: the directions its texture coordinates increase along, on the surface.
+      const vec3 worldU = mul(terrainLayerUnproject(layer.flags, layer.texcoordU.xy), worldToObject);
+      const vec3 worldV = mul(terrainLayerUnproject(layer.flags, layer.texcoordV.xy), worldToObject);
+      const vec3 tangent = worldU - dot(worldU, geometryNormal) * geometryNormal;
+      const vec3 bitangent = worldV - dot(worldV, geometryNormal) * geometryNormal;
+      const float tangentLength = length(tangent);
+      const float bitangentLength = length(bitangent);
+
+      // A projection edge-on to the surface has no frame; such a layer carries next to no weight.
+      if (tangentLength > 1e-6 && bitangentLength > 1e-6)
+      {
+        layerNormal = normalize(
+          tangent / tangentLength * tangentNormal.x + bitangent / bitangentLength * tangentNormal.y + geometryNormal * tangentNormal.z);
+      }
+    }
+
+    float roughness = float((layer.flags >> TERRAIN_LAYER_ROUGHNESS_SHIFT) & 0xFF) / 255.0;
+    if (roughnessTextureIndex != uint(BINDING_INDEX_INVALID))
+    {
+      roughness = terrainLayerRead(roughnessTextureIndex, samplerIndex, texcoords).x;
+    }
+
+    float metallic = float((layer.flags >> TERRAIN_LAYER_METALLIC_SHIFT) & 0xFF) / 255.0;
+    if (metallicTextureIndex != uint(BINDING_INDEX_INVALID))
+    {
+      metallic = terrainLayerRead(metallicTextureIndex, samplerIndex, texcoords).x;
+    }
+
+    blend.albedo += weight * albedo;
+    blend.roughness += weight * roughness;
+    blend.metallic += weight * metallic;
+    normal += weight * layerNormal;
+    totalWeight += weight;
+  }
+
+  if (totalWeight <= 0)
+  {
+    return blend;
+  }
+
+  blend.valid = true;
+  blend.albedo /= totalWeight;
+  blend.roughness /= totalWeight;
+  blend.metallic /= totalWeight;
+  blend.normal = normalize(normal);
+  blend.normalDetail = saturate(1.0 - dot(blend.normal, geometryNormal));
+  return blend;
+}
