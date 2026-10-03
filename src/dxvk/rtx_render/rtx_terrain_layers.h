@@ -76,6 +76,16 @@ namespace dxvk {
     void addLayerDraw(RtxContext& ctx, const DrawCallState& drawCallState);
 
     /**
+      * \brief: Appends a layer to the chunk with the given transform and tracks its textures for
+      *         this frame.
+      *
+      * \param [in] ctx: tracks the layer's textures and finds its replacement material
+      * \param [in] layer: the layer as the game described it
+      * \param [in] objectToWorld: the chunk's transform
+      */
+    void addLayer(RtxContext& ctx, const TerrainLayerDraw& layer, const Matrix4& objectToWorld);
+
+    /**
       * \brief: The table as the shaders read it. Empty unless the layers are evaluated at a hit.
       */
     TerrainLayerArgs getTerrainLayerArgs() const;

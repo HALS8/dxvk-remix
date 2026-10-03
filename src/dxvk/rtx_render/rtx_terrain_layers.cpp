@@ -74,14 +74,20 @@ namespace dxvk {
   }
 
   void TerrainLayers::addLayerDraw(RtxContext& ctx, const DrawCallState& drawCallState) {
-    if (!enable() || !drawCallState.getTerrainLayer().enabled) {
+    if (drawCallState.getTerrainLayer().enabled) {
+      addLayer(ctx, drawCallState.getTerrainLayer(), drawCallState.getTransformData().objectToWorld);
+    }
+  }
+
+  void TerrainLayers::addLayer(RtxContext& ctx, const TerrainLayerDraw& layerDraw, const Matrix4& objectToWorld) {
+    if (!enable()) {
       return;
     }
 
     SceneManager& sceneManager = ctx.getSceneManager();
 
     // The layer limit is checked first, so a chunk is never added without a layer.
-    Chunk* chunk = m_layerCount < kMaxLayers ? findOrAddChunk(drawCallState.getTransformData().objectToWorld) : nullptr;
+    Chunk* chunk = m_layerCount < kMaxLayers ? findOrAddChunk(objectToWorld) : nullptr;
     if (chunk == nullptr) {
       m_statistics.droppedLayers++;
       return;
@@ -95,10 +101,11 @@ namespace dxvk {
     m_maskSamplerIndex = sceneManager.trackSampler(m_maskSampler);
 
     Layer& layer = chunk->layers.emplace_back();
-    layer.draw = drawCallState.getTerrainLayer();
+    layer.draw = layerDraw;
 
+    // A legacy material is identified by its colour texture.
     std::shared_ptr<MaterialData> replacement =
-      sceneManager.getAssetReplacer()->getReplacementMaterial(drawCallState.getMaterialData().getHash());
+      sceneManager.getAssetReplacer()->getReplacementMaterial(layerDraw.colorTexture.getImageHash());
     if (replacement != nullptr && replacement->getType() == MaterialDataType::Opaque) {
       layer.replacement = std::move(replacement);
     }

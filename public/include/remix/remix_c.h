@@ -606,6 +606,11 @@ extern "C" {
   //                from, a REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_* value
   //   bit  10      REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE: coverage is the mask
   //                times the colour texture's alpha
+  //   bit  11      REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY: the draw only describes a
+  //                layer; the chunk's geometry comes from another draw with the same world
+  //                transform. A chunk's layers cover it between them, so a caller that can
+  //                submit the whole chunk once marks its other layer draws with this, and they
+  //                are recorded in order without being rendered.
   //   bits 16-23   alpha reference: coverage not greater than this (out of 255) is no coverage
   //
   // The projected position is (object-space position + origin), with the origin given as three
@@ -616,12 +621,16 @@ extern "C" {
   //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_TERRAIN_LAYER,
   //                          REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE | (colorStage << 1) | ...);
   //
+  // REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES is read-only: GetRenderState returns the
+  // REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_* bits this runtime honours, and setting it does nothing.
+  //
   // Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y 0x52584306u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z 0x52584307u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE 0x52584308u
+  #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES 0x52584309u
 
   #define REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE 0x1u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_STAGE_SHIFT 1u
@@ -634,7 +643,10 @@ extern "C" {
   #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_XY 1u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_ZY 2u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE 0x400u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY 0x800u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT 16u
+
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY 0x1u
 
 
   typedef struct remixapi_AnimatedFloat1D {

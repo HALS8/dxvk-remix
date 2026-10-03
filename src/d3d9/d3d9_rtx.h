@@ -328,12 +328,16 @@ namespace dxvk {
     bool m_albedoTintMaskedByAlpha = false;
 
     // REMIXAPI_D3D9_RS_TERRAIN_LAYER and the states after it, in their numeric order.
-    static constexpr uint32_t kTerrainLayerStateCount = 5;
+    static constexpr uint32_t kTerrainLayerStateCount = 6;
     std::array<uint32_t, kTerrainLayerStateCount> m_terrainLayerStates = {};
 
     // Describes the active draw call as a terrain layer from m_terrainLayerStates and the
     // texture stages they name.
     void setTerrainLayerState();
+
+    // Records a description-only terrain layer draw without submitting its geometry. False when
+    // the draw is not one, or cannot be read as a layer.
+    bool emitTerrainLayerDescription();
 
     Rc<DxvkSampler> getStageSampler(uint32_t stage);
 

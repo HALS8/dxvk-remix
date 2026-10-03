@@ -14,6 +14,7 @@
 #include "d3d9_rtx_utils.h"
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
+#include "../dxvk/rtx_render/rtx_terrain_layers.h"
 #include "../dxvk/rtx_render/rtx_fork_hooks.h"
 #include <remix/remix_c.h>
 
@@ -817,6 +818,11 @@ namespace dxvk {
       return PrepareDrawFlag::PreserveDrawCallAndItsState;
     }
 
+    // A draw that only describes a terrain layer has no geometry of its own to trace.
+    if (emitTerrainLayerDescription()) {
+      return prepareFlagsForIgnoredDraws;
+    }
+
     m_forceGeometryCopy = RtxOptions::useBuffersDirectly() == false;
     m_forceGeometryCopy |= m_parent->GetOptions()->allowDiscard == false;
 
@@ -979,16 +985,41 @@ namespace dxvk {
   }
 
   bool D3D9Rtx::IsTerrainLayerState(uint32_t state) {
-    static_assert(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE - REMIXAPI_D3D9_RS_TERRAIN_LAYER + 1 == kTerrainLayerStateCount);
+    static_assert(REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES - REMIXAPI_D3D9_RS_TERRAIN_LAYER + 1 == kTerrainLayerStateCount);
     return state - REMIXAPI_D3D9_RS_TERRAIN_LAYER < kTerrainLayerStateCount;
   }
 
   void D3D9Rtx::SetTerrainLayerState(uint32_t state, uint32_t value) {
-    m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER] = value;
+    if (state != REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES) {
+      m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER] = value;
+    }
   }
 
   uint32_t D3D9Rtx::GetTerrainLayerState(uint32_t state) const {
+    if (state == REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES) {
+      return REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY;
+    }
     return m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
+  }
+
+  bool D3D9Rtx::emitTerrainLayerDescription() {
+    if (!(m_terrainLayerStates[0] & REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY)) {
+      return false;
+    }
+
+    setTerrainLayerState();
+    TerrainLayerDraw layer = std::move(m_activeDrawCallState.terrainLayer);
+    m_activeDrawCallState.terrainLayer = {};
+    if (!layer.enabled) {
+      return false;
+    }
+
+    m_parent->EmitCs([cLayer = std::move(layer),
+                      cObjectToWorld = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)]](DxvkContext* ctx) {
+      RtxContext* rtxContext = static_cast<RtxContext*>(ctx);
+      rtxContext->getSceneManager().getTerrainLayers().addLayer(*rtxContext, cLayer, cObjectToWorld);
+    });
+    return true;
   }
 
   Rc<DxvkSampler> D3D9Rtx::getStageSampler(uint32_t stage) {
