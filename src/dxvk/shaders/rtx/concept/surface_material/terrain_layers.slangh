@@ -13,6 +13,8 @@
 struct TerrainLayerBlend
 {
   bool valid;
+  // How much of the layers' material to take over the surface's own, 0..1.
+  float weight;
   // Linear.
   vec3 albedo;
   // World space.
@@ -197,11 +199,23 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
 {
   TerrainLayerBlend blend;
   blend.valid = false;
+  blend.weight = 1;
   blend.albedo = vec3(0);
   blend.normal = surfaceInteraction.geometryNormal;
   blend.normalDetail = 0;
   blend.roughness = 0;
   blend.metallic = 0;
+
+  if (cb.terrainLayerArgs.fadeEndDistance > cb.terrainLayerArgs.fadeStartDistance)
+  {
+    const float distance = length(surfaceInteraction.position - cameraGetWorldPosition(cb.camera));
+    blend.weight = saturate((cb.terrainLayerArgs.fadeEndDistance - distance) /
+                            (cb.terrainLayerArgs.fadeEndDistance - cb.terrainLayerArgs.fadeStartDistance));
+    if (blend.weight <= 0)
+    {
+      return blend;
+    }
+  }
 
   TerrainLayerChunk chunk;
   vec3 objectPosition;

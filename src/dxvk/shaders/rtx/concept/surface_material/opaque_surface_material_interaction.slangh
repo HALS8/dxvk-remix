@@ -812,7 +812,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   
   if (terrainLayerBlend.valid)
   {
-    albedo = terrainLayerBlend.albedo;
+    albedo = mix(vec3(albedo), terrainLayerBlend.albedo, terrainLayerBlend.weight);
   }
 
   // Apply material modifiers/overrides
@@ -880,8 +880,8 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
 #endif
   if (terrainLayerBlend.valid)
   {
-    normal = terrainLayerBlend.normal;
-    normalDetail = terrainLayerBlend.normalDetail;
+    normal = normalize(mix(vec3(normal), terrainLayerBlend.normal, terrainLayerBlend.weight));
+    normalDetail = mix(float(normalDetail), terrainLayerBlend.normalDetail, terrainLayerBlend.weight);
   }
 
   // Load Tangent
@@ -899,7 +899,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
 
   if (terrainLayerBlend.valid)
   {
-    roughness = terrainLayerBlend.roughness;
+    roughness = mix(float(roughness), terrainLayerBlend.roughness, terrainLayerBlend.weight);
   }
 
 #if defined(RAY_TRACING_PRIMARY_RAY)
@@ -923,7 +923,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
 
   if (terrainLayerBlend.valid)
   {
-    metallic = terrainLayerBlend.metallic;
+    metallic = mix(float(metallic), terrainLayerBlend.metallic, terrainLayerBlend.weight);
   }
     
   metallic = saturate(metallic * cb.opaqueMaterialArgs.metallicScale + cb.opaqueMaterialArgs.metallicBias);

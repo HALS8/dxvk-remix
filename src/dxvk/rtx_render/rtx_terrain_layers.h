@@ -41,6 +41,12 @@ namespace dxvk {
     RTX_OPTION("rtx.terrainLayers", bool, useRetainedChunks, true,
                "Includes the chunks a game described as retained (REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED) in the table.\n"
                "Off, only the chunks described by the current frame's draws are evaluated.");
+    RTX_OPTION("rtx.terrainLayers", float, fadeStartDistance, 0.f,
+               "Distance from the camera, in world units, at which terrain starts to fade from its layers back to the\n"
+               "surface's own material. For a game whose layers are only described out to some range.");
+    RTX_OPTION("rtx.terrainLayers", float, fadeEndDistance, 0.f,
+               "Distance from the camera at which terrain has faded to the surface's own material entirely.\n"
+               "No fade unless this is greater than rtx.terrainLayers.fadeStartDistance.");
     RTX_OPTION("rtx.terrainLayers", float, minBlendWeight, 0.02f,
                "Layers whose composited weight at a hit is below this are not sampled.");
     RTX_OPTION("rtx.terrainLayers", bool, logSummary, false,

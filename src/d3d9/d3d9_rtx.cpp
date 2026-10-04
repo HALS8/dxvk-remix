@@ -999,7 +999,8 @@ namespace dxvk {
     if (state == REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES) {
       return REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY |
              REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED |
-             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER;
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER |
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE;
     }
     return m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
   }
@@ -1107,6 +1108,7 @@ namespace dxvk {
                                      floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z));
     layer.maskScale = floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE);
     layer.retained = description & REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED;
+    layer.replace = description & REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE;
     layer.enabled = true;
   }
 

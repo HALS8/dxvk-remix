@@ -621,6 +621,9 @@ extern "C" {
   //                but terrain geometry without layers of its own, such as a distant level of
   //                detail. Where it lies over a chunk its surface is evaluated from the chunk's
   //                layers; elsewhere it keeps its own material.
+  //   bit  15      REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE: with RETAINED, the layer starts its
+  //                chunk over: layers already retained for the chunk are dropped first. Set on
+  //                the first layer of a chunk, describing it again cannot leave old layers behind.
   //   bits 16-23   alpha reference: coverage not greater than this (out of 255) is no coverage
   //
   // The projected position is (object-space position + origin), with the origin given as three
@@ -657,11 +660,13 @@ extern "C" {
   #define REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED 0x1000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE 0x2000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER 0x4000u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE 0x8000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT 16u
 
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY 0x1u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED 0x2u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER 0x4u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE 0x8u
 
 
   typedef struct remixapi_AnimatedFloat1D {

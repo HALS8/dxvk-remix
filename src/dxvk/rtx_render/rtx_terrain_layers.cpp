@@ -174,6 +174,10 @@ namespace dxvk {
       m_statistics.droppedLayers++;
       return;
     }
+    if (retained && layerDraw.replace) {
+      set.layerCount -= static_cast<uint32_t>(chunk->layers.size());
+      chunk->layers.clear();
+    }
     set.layerCount++;
 
     Layer& layer = chunk->layers.emplace_back();
@@ -443,6 +447,8 @@ namespace dxvk {
     m_args.chunkCount = static_cast<uint32_t>(chunks.size());
     m_args.maskSamplerIndex = m_maskSamplerIndex;
     m_args.minBlendWeight = minBlendWeight();
+    m_args.fadeStartDistance = fadeStartDistance();
+    m_args.fadeEndDistance = fadeEndDistance();
     m_args.tableTextureIndex = m_tableTextureIndex;
   }
 
@@ -482,6 +488,8 @@ namespace dxvk {
     RemixGui::Checkbox("Collect Terrain Layers", &enableObject());
     RemixGui::Checkbox("Evaluate Terrain Layers at Hit", &evaluateAtHitObject());
     RemixGui::Checkbox("Use Retained Terrain Chunks", &useRetainedChunksObject());
+    RemixGui::DragFloat("Terrain Layer Fade Start", &fadeStartDistanceObject(), 10.f, 0.f, 100000.f, "%.0f");
+    RemixGui::DragFloat("Terrain Layer Fade End", &fadeEndDistanceObject(), 10.f, 0.f, 100000.f, "%.0f");
     RemixGui::Checkbox("Log Terrain Layer Summary", &logSummaryObject());
 
     const Statistics& s = m_shownStatistics;

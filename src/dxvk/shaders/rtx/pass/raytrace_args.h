@@ -144,6 +144,13 @@ struct TerrainLayerArgs {
   uint gridHeight;
   uint chunkOffset;
   uint layerOffset;
+
+  // Terrain fades from its layers to the surface's own material between these distances from
+  // the camera. No fade unless the end is greater than the start.
+  float fadeStartDistance;
+  float fadeEndDistance;
+  uint pad0;
+  uint pad1;
 };
 
 struct NeeCacheArgs {
