@@ -359,9 +359,44 @@ namespace dxvk {
     SceneManager& sceneManager = ctx->getSceneManager();
 
     if (useRetainedChunks()) {
+      // Retained chunks share a small set of colour textures between many layers, so what a
+      // colour texture resolves to this frame is worked out once and copied.
+      struct ColourKey {
+        XXH64_hash_t imageHash;
+        const DxvkSampler* sampler;
+        bool operator==(const ColourKey& other) const { return imageHash == other.imageHash && sampler == other.sampler; }
+      };
+      struct ColourKeyHash {
+        size_t operator()(const ColourKey& key) const { return static_cast<size_t>(key.imageHash) ^ reinterpret_cast<size_t>(key.sampler); }
+      };
+      std::unordered_map<ColourKey, Layer, ColourKeyHash> resolved;
+
       for (Chunk& chunk : m_retained.chunks) {
         for (Layer& layer : chunk.layers) {
-          resolveLayer(sceneManager, layer);
+          const ColourKey key = { layer.draw.colorTexture.getImageHash(), layer.draw.colorSampler.ptr() };
+          const auto found = resolved.find(key);
+          if (found == resolved.end()) {
+            resolveLayer(sceneManager, layer);
+            resolved.emplace(key, layer);
+          } else {
+            const Layer& same = found->second;
+            layer.replacement = same.replacement;
+            layer.colorIsLinear = same.colorIsLinear;
+            layer.roughnessConstant = same.roughnessConstant;
+            layer.metallicConstant = same.metallicConstant;
+            layer.colorTextureIndex = same.colorTextureIndex;
+            layer.colorSamplerIndex = same.colorSamplerIndex;
+            layer.normalTextureIndex = same.normalTextureIndex;
+            layer.roughnessTextureIndex = same.roughnessTextureIndex;
+            layer.metallicTextureIndex = same.metallicTextureIndex;
+            layer.emissiveTextureIndex = same.emissiveTextureIndex;
+            layer.heightTextureIndex = same.heightTextureIndex;
+            // The mask is the layer's own.
+            layer.maskTextureIndex = kSurfaceMaterialInvalidTextureIndex;
+            if (layer.draw.maskTexture.isValid()) {
+              sceneManager.trackTexture(layer.draw.maskTexture, layer.maskTextureIndex, true);
+            }
+          }
           countLayer(chunk, layer);
         }
       }
