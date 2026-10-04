@@ -134,6 +134,15 @@ private:
   std::vector<std::unique_ptr<ReplacementInstance>> m_replacementInstances;
   uint32_t m_nextReplacementInstanceId = 0;
 
+  // Fork (anti-culling/retention): when the instance count exceeds
+  // rtx.antiCulling.object.numObjectsToKeep, releases the excess from the instances
+  // anti-culling kept this pass, farthest from the camera first.
+  void releaseFarthestAntiCulledInstances();
+
+  // Instances the current garbage-collection pass kept through anti-culling, with their
+  // distance from the camera. Only valid inside that pass.
+  std::vector<std::pair<float, ReplacementInstance*>> m_antiCulledInstances;
+
 };
 
 }  // namespace dxvk

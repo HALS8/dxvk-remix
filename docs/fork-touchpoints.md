@@ -4800,3 +4800,29 @@ clears the forced-category mask as well, which that contract already promised. U
 - **src/dxvk/shaders/rtx/concept/surface_material/opaque_surface_material_interaction.slangh** -
   inline tweak (+15 / -2 LOC). *Applies the tint ahead of the texture stage operations and keeps the
   alpha out of opacity; `albedoAlreadyLinear` moves up to serve both.*
+
+---
+
+## Workstream - anti-culling: retention by distance, statistics (fork - 2026-10-04)
+
+Anti-culling keeps an object the game stopped drawing for as long as it stays outside the camera
+frustum, with no limit until `rtx.antiCulling.object.numObjectsToKeep` instances exist, at which
+point every kept instance is released in one pass; a light is kept for a fixed number of frames.
+`rtx.antiCulling.object.retentionDistanceMeters` and `rtx.antiCulling.light.retentionDistanceMeters`
+bound both by distance from the camera instead (0 = the rule above, the default). Past the instance
+cap only the excess is released, farthest kept instance first. `rtx.antiCulling.logStatistics` logs,
+every 600 frames, what was kept and what was released for each reason. Controls sit in the dev menu
+under Anti-Culling. Upstreamable.
+
+- **src/dxvk/rtx_render/rtx_fork_anti_culling.h / .cpp** - fork-owned. *Options, the distance test,
+  the statistics window and the menu controls.*
+- **src/dxvk/rtx_render/rtx_draw_call_tracker.cpp / .h** - inline tweak. *`garbageCollectReplacementInstances`
+  applies the distances, records a release reason for every instance it destroys, and calls the new
+  `releaseFarthestAntiCulledInstances` in place of the all-at-once `forceGC`.*
+- **src/dxvk/rtx_render/rtx_light_manager.cpp / .h** - inline tweak. *`garbageCollectionInternal`
+  takes the camera position and applies the light distance in place of the frame limit when set.*
+- **src/dxvk/rtx_render/rtx_scene_manager.cpp** - hook (+2 LOC). *Closes the frame's statistics after
+  the garbage-collection passes.*
+- **src/dxvk/imgui/dxvk_imgui.cpp** - hook (+2 LOC). *`AntiCullingRetention::showImguiSettings`.*
+- **src/dxvk/meson.build** - registers the fork-owned translation unit.
+- **`RtxOptions.md`** - REGEN PENDING (three new options).

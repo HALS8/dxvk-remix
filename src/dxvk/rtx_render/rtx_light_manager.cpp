@@ -26,6 +26,7 @@
 #include <limits>
 
 #include "rtx_fork_hooks.h"
+#include "rtx_fork_anti_culling.h" // Fork (anti-culling/retention)
 #include "rtx_light_manager.h"
 #include "rtx_context.h"
 #include "rtx_options.h"
@@ -107,10 +108,16 @@ namespace dxvk {
     m_fallbackLight.reset();
   }
 
-  void LightManager::garbageCollectionInternal() {
+  void LightManager::garbageCollectionInternal(const Vector3& cameraPosition) {
     const uint32_t currentFrame = m_device->getCurrentFrameId();
     const uint32_t framesToKeep = RtxOptions::numFramesToKeepLights();
     const uint32_t framesToSleep = RtxOptions::getNumFramesToPutLightsToSleep();
+
+    // Fork (anti-culling/retention): distance-bounded retention, see rtx_fork_anti_culling.h.
+    using Release = AntiCullingRetention::Release;
+    const bool antiCullingEnabled = RtxOptions::AntiCulling::isLightAntiCullingEnabled();
+    const float retentionDistance = AntiCullingRetention::lightDistance();
+    uint32_t keptLights = 0;
 
     for (auto it = m_lights.begin(); it != m_lights.end();) {
       const RtLight& light = it->second;
@@ -119,21 +126,41 @@ namespace dxvk {
         continue;
       }
       const uint32_t frameLastTouched = light.getFrameLastTouched();
-      if (!RtxOptions::AntiCulling::isLightAntiCullingEnabled() || // It's always True if anti-culling is disabled
-          (light.getIsInsideFrustum() ||
-           frameLastTouched + RtxOptions::AntiCulling::Light::numFramesToExtendLightLifetime() <= currentFrame)) {
+
+      // A light outside the frustum is protected while it is within the retention distance, or
+      // within the extended lifetime when no distance is set.
+      Release release = Release::NotCovered;
+      if (antiCullingEnabled) {
+        if (light.getIsInsideFrustum()) {
+          release = Release::InsideFrustum;
+        } else if (retentionDistance > 0.0f) {
+          if (length(light.getPosition() - cameraPosition) > retentionDistance) {
+            release = Release::BeyondDistance;
+          }
+        } else if (frameLastTouched + RtxOptions::AntiCulling::Light::numFramesToExtendLightLifetime() <= currentFrame) {
+          release = Release::LifetimeExpired;
+        }
+      }
+      const bool isProtected = antiCullingEnabled && release == Release::NotCovered;
+
+      if (!isProtected) {
         if (light.isDynamic || suppressLightKeeping()) {
           if (light.getFrameLastTouched() < currentFrame) {
+            AntiCullingRetention::countLightRelease(release);
             it = m_lights.erase(it);
             continue;
           }
         } else if ((light.isStaticCount < framesToSleep) && (frameLastTouched + framesToKeep) <= currentFrame) {
+          AntiCullingRetention::countLightRelease(release);
           it = m_lights.erase(it);
           continue;
         }
+      } else if (frameLastTouched < currentFrame) {
+        keptLights++;
       }
       ++it;
     }
+    AntiCullingRetention::countLights(static_cast<uint32_t>(m_lights.size()), keptLights);
 
     for (auto it = m_externallyTrackedLights.begin(); it != m_externallyTrackedLights.end();) {
       RtLight& light = it->second;
@@ -183,7 +210,7 @@ namespace dxvk {
       }
     }
 
-    garbageCollectionInternal();
+    garbageCollectionInternal(camera.getPosition(false));
     m_lightDebugUILock.unlock();
   }
 

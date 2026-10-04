@@ -208,7 +208,7 @@ private:
 
   bool getActiveDomeLight(DomeLight& lightOut);
 
-  void garbageCollectionInternal();
+  void garbageCollectionInternal(const Vector3& cameraPosition);
 
   // Similarity check.
   //  Returns -1 if not similar

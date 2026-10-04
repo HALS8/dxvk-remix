@@ -237,6 +237,8 @@ dxvk_src = files([
   'rtx_render/rtx_external_effects.h',
   'rtx_render/rtx_file_watch.cpp',
   'rtx_render/rtx_file_watch.h',
+  'rtx_render/rtx_fork_anti_culling.cpp',
+  'rtx_render/rtx_fork_anti_culling.h',
   'rtx_render/rtx_fork_api_entry.cpp',
   'rtx_render/rtx_fork_capture.cpp',
   'rtx_render/rtx_fork_d3d9_alpha.cpp',

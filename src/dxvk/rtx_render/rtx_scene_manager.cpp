@@ -26,6 +26,7 @@
 
 #include "rtx_asset_replacer.h"
 #include "rtx_fork_hooks.h"
+#include "rtx_fork_anti_culling.h" // Fork (anti-culling/retention)
 #include "rtx_weather.h"
 #include "rtx_scene_manager.h"
 #include "rtx_opacity_micromap_manager.h"
@@ -386,6 +387,9 @@ namespace dxvk {
     m_accelManager.garbageCollection();
     m_lightManager.garbageCollection(getCamera());
     m_rayPortalManager.garbageCollection();
+
+    // Fork (anti-culling/retention): close this frame's statistics.
+    AntiCullingRetention::endFrame(m_device->getCurrentFrameId());
   }
 
   void SceneManager::onDestroy() {

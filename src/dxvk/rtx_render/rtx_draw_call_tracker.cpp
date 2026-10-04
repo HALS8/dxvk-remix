@@ -19,11 +19,14 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <algorithm>
+
 #include "rtx_draw_call_tracker.h"
 #include "rtx_options.h"
 #include "rtx_ray_portal_manager.h"
 #include "rtx_intersection_test.h"
 #include "rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
+#include "rtx_fork_anti_culling.h" // Fork (anti-culling/retention)
 #include "dxvk_device.h"
 #include "../util/util_struct_hash.h"
 
@@ -398,8 +401,15 @@ namespace dxvk {
     const bool objectAntiCullingEnabled = RtxOptions::AntiCulling::isObjectAntiCullingEnabled();
     const bool lightAntiCullingEnabled = RtxOptions::AntiCulling::isLightAntiCullingEnabled();
     const bool isCameraCut = camera.isCameraCut();
-    const bool forceGC = (m_replacementInstances.size() >=
-        RtxOptions::AntiCulling::Object::numObjectsToKeep());
+
+    // Fork (anti-culling/retention): distance-bounded retention, see rtx_fork_anti_culling.h.
+    using Release = AntiCullingRetention::Release;
+    const Vector3 cameraPosition = camera.getPosition(false);
+    const float objectRetentionDistance = AntiCullingRetention::objectDistance();
+    const float lightRetentionDistance = AntiCullingRetention::lightDistance();
+    uint32_t keptObjects = 0;
+    uint32_t keptLights = 0;
+    m_antiCulledInstances.clear();
 
     for (size_t i = 0; i < m_replacementInstances.size();) {
       ReplacementInstance* replacementInstance = m_replacementInstances[i].get();
@@ -409,11 +419,17 @@ namespace dxvk {
 
       if (replacementInstance->frameLastSeen + numFramesToKeepObjects <= currentFrame) {
         bool keepAlive = false;
+        Release release = Release::NotCovered;
+        float distance = 0.0f;
 
         // Only anti-cull RIs that have been matched at least once after creation.
         const bool isStable = (replacementInstance->frameLastSeen > replacementInstance->frameCreated);
 
-        if (!isCameraCut && isStable) {
+        if (isCameraCut) {
+          release = Release::CameraCut;
+        } else if (!isStable) {
+          release = Release::NeverMatched;
+        } else {
           // Skinned and player model objects should always be GC'd when stale —
           // anti-culling them produces frozen poses or wrong positions.
           // Objects tagged IgnoreAntiCulling by the game config are also exempt.
@@ -433,48 +449,117 @@ namespace dxvk {
               categories.test(InstanceCategories::IgnoreAntiCulling) ||
               wasMovingWhenLastSeen;
 
+          if (exemptFromAntiCulling) {
+            release = replacementInstance->isSkinned ? Release::Skinned
+                : categories.test(InstanceCategories::ThirdPersonPlayerModel) ? Release::PlayerModel
+                : categories.test(InstanceCategories::IgnoreAntiCulling) ? Release::IgnoreCategory
+                : Release::Moving;
+          }
+
           // Object anti-culling: keep objects that are OUTSIDE the camera frustum.
           // If the game stopped submitting an object that's clearly visible, it
           // likely had a valid reason (destruction, LOD swap, etc.) — allow GC.
           // Objects outside the frustum may have been wrongly culled by the game's
           // own frustum (which doesn't match ours) and should be preserved.
-          if (!keepAlive && objectAntiCullingEnabled && !forceGC
-              && isAntiCullingSupported && hasMeshes && !exemptFromAntiCulling) {
-            keepAlive = !aabbIntersectsFrustum(
-                camera,
+          const bool objectCovered = objectAntiCullingEnabled
+              && isAntiCullingSupported && hasMeshes && !exemptFromAntiCulling;
+          if (objectCovered) {
+            distance = AntiCullingRetention::distanceToBounds(
+                cameraPosition,
                 replacementInstance->geometryBoundingBox,
                 replacementInstance->objectToWorld);
+            if (aabbIntersectsFrustum(
+                    camera,
+                    replacementInstance->geometryBoundingBox,
+                    replacementInstance->objectToWorld)) {
+              release = Release::InsideFrustum;
+            } else if (objectRetentionDistance > 0.0f && distance > objectRetentionDistance) {
+              release = Release::BeyondDistance;
+            } else {
+              keepAlive = true;
+              keptObjects++;
+            }
           }
 
           // Light anti-culling for mesh replacement lights. Mirrors the old
           // LightManager MeshReplacement behavior: isDynamic lights inside
           // the frustum were GC'd immediately — only lights OUTSIDE the
-          // camera frustum were protected, and only within the extended
-          // lifetime window. Uses the camera frustum (not the wider light
+          // camera frustum were protected, and only within the retention
+          // distance, or within the extended lifetime window when no distance
+          // is set. Uses the camera frustum (not the wider light
           // anti-culling frustum) since the check is position-based like
           // object anti-culling.
           if (!keepAlive && lightAntiCullingEnabled && hasLights
-              && isAntiCullingSupported && !exemptFromAntiCulling && !forceGC) {
-            const bool withinExtendedLifetime =
-                replacementInstance->frameLastSeen + numFramesToKeepLights > currentFrame;
-            if (withinExtendedLifetime) {
-              keepAlive = !aabbIntersectsFrustum(
-                  camera,
-                  replacementInstance->lightBoundingBox,
-                  replacementInstance->objectToWorld);
+              && isAntiCullingSupported && !exemptFromAntiCulling) {
+            const float lightDistance = AntiCullingRetention::distanceToBounds(
+                cameraPosition,
+                replacementInstance->lightBoundingBox,
+                replacementInstance->objectToWorld);
+            const bool outOfRange = lightRetentionDistance > 0.0f
+                ? lightDistance > lightRetentionDistance
+                : replacementInstance->frameLastSeen + numFramesToKeepLights <= currentFrame;
+            Release lightRelease = Release::InsideFrustum;
+            if (outOfRange) {
+              lightRelease = lightRetentionDistance > 0.0f ? Release::BeyondDistance : Release::LifetimeExpired;
+            } else if (!aabbIntersectsFrustum(
+                           camera,
+                           replacementInstance->lightBoundingBox,
+                           replacementInstance->objectToWorld)) {
+              keepAlive = true;
+              keptLights++;
+              distance = lightDistance;
+            }
+            if (!objectCovered) {
+              release = lightRelease;
             }
           }
         }
 
         if (!keepAlive) {
+          AntiCullingRetention::countInstanceRelease(release);
           destroyReplacementInstance(replacementInstance);
           std::swap(m_replacementInstances[i], m_replacementInstances.back());
           m_replacementInstances.pop_back();
           continue;
         }
+        m_antiCulledInstances.emplace_back(distance, replacementInstance);
       }
       ++i;
     }
+
+    releaseFarthestAntiCulledInstances();
+    AntiCullingRetention::countInstances(
+        static_cast<uint32_t>(m_replacementInstances.size()), keptObjects, keptLights);
+  }
+
+  void DrawCallTracker::releaseFarthestAntiCulledInstances() {
+    const size_t cap = RtxOptions::AntiCulling::Object::numObjectsToKeep();
+    if (m_replacementInstances.size() <= cap || m_antiCulledInstances.empty()) {
+      return;
+    }
+
+    const size_t excess = std::min(m_replacementInstances.size() - cap, m_antiCulledInstances.size());
+    std::partial_sort(
+        m_antiCulledInstances.begin(), m_antiCulledInstances.begin() + excess, m_antiCulledInstances.end(),
+        [](const auto& a, const auto& b) { return a.first > b.first; });
+
+    std::unordered_set<const ReplacementInstance*> farthest;
+    for (size_t i = 0; i < excess; i++) {
+      farthest.insert(m_antiCulledInstances[i].second);
+    }
+
+    for (size_t i = 0; i < m_replacementInstances.size();) {
+      ReplacementInstance* replacementInstance = m_replacementInstances[i].get();
+      if (farthest.count(replacementInstance) != 0) {
+        destroyReplacementInstance(replacementInstance);
+        std::swap(m_replacementInstances[i], m_replacementInstances.back());
+        m_replacementInstances.pop_back();
+        continue;
+      }
+      ++i;
+    }
+    AntiCullingRetention::countInstanceRelease(
+        AntiCullingRetention::Release::OverCap, static_cast<uint32_t>(excess));
   }
 
   void DrawCallTracker::clear() {

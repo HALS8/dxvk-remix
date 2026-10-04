@@ -79,6 +79,7 @@
 #include "rtx_render/rtx_overlay_window.h"
 #include "rtx_render/rtx_fork_hooks.h"
 #include "rtx_render/rtx_fork_d3d9_alpha.h" // Fork (d3d9/alpha-gpu)
+#include "rtx_render/rtx_fork_anti_culling.h" // Fork (anti-culling/retention)
 // NV-DXVK start: Numos native weather UI
 #include "rtx_render/rtx_weather.h"
 // NV-DXVK end
@@ -4353,6 +4354,8 @@ namespace dxvk {
           RemixGui::InputInt("Max Number of Frames to keep lights", &RtxOptions::AntiCulling::Light::numFramesToExtendLightLifetimeObject(), 1, 1, 0);
           RemixGui::DragFloat("Anti-Culling Lights Fov Scale", &RtxOptions::AntiCulling::Light::fovScaleObject(), 0.01f, 0.1f, 2.0f);
         }
+        // Fork (anti-culling/retention): retention distances and statistics (rtx_fork_anti_culling.h).
+        AntiCullingRetention::showImguiSettings();
       } else {
         ImGui::Text("The game doesn't set up the View Matrix, \nAnti-Culling is disabled to prevent visual corruption.");
       }
