@@ -160,6 +160,13 @@ struct Surface
     set { data2.w = newValue ? packedFlagSet(data2.w, 1 << 30) : packedFlagUnset(data2.w, 1 << 30); }
   }
 
+  // Terrain without layers of its own, evaluated from the terrain layer chunk it lies over.
+  property bool isTerrainLayerReceiver
+  {
+    get { return packedFlagGet(data2.w, 1u << 31); }
+    set { data2.w = newValue ? packedFlagSet(data2.w, 1u << 31) : packedFlagUnset(data2.w, 1u << 31); }
+  }
+
   // Matrices
 
   property mat4x3 prevObjectToWorld

@@ -1,8 +1,9 @@
 #pragma once
 
 // Layered terrain: evaluates a terrain chunk's layers at a hit from the game's own layer textures
-// and coverage masks (cb.terrainLayerArgs), in the order and with the blend the game composites
-// them in, instead of reading the resampled terrain cascade.
+// and coverage masks, in the order and with the blend the game composites them in, instead of
+// reading the resampled terrain cascade. The chunks and layers are read from the table texture
+// described beside TerrainLayerArgs.
 //
 // A layer's coverage is its mask (times the colour texture's alpha where flagged), dropped when
 // not greater than the layer's alpha reference; each layer then composites over the ones before
@@ -21,6 +22,29 @@ struct TerrainLayerBlend
   float metallic;
 };
 
+struct TerrainLayerChunk
+{
+  // Rows of the world-to-object transform.
+  vec4 worldToObject[3];
+  vec3 projectionOrigin;
+  float maskScale;
+  uint firstLayer;
+  uint layerCount;
+};
+
+struct TerrainLayer
+{
+  vec3 texcoordU;
+  vec3 texcoordV;
+  uint colorTextureIndex;
+  uint normalTextureIndex;
+  uint roughnessTextureIndex;
+  uint metallicTextureIndex;
+  uint maskTextureIndex;
+  uint samplerIndex;
+  uint flags;
+};
+
 // The colour texture coordinates of a layer and their footprint.
 struct TerrainLayerTexcoords
 {
@@ -28,6 +52,63 @@ struct TerrainLayerTexcoords
   vec2 gradientX;
   vec2 gradientY;
 };
+
+vec4 terrainLayerTableRead(uint texel)
+{
+  return textures[nonuniformEXT(cb.terrainLayerArgs.tableTextureIndex)].Load(
+    int3(texel % kTerrainLayerTableWidth, texel / kTerrainLayerTableWidth, 0));
+}
+
+vec3 terrainLayerChunkPoint(TerrainLayerChunk chunk, vec3 worldPosition)
+{
+  const vec4 p = vec4(worldPosition, 1.0);
+  return vec3(dot(chunk.worldToObject[0], p), dot(chunk.worldToObject[1], p), dot(chunk.worldToObject[2], p));
+}
+
+vec3 terrainLayerChunkDirection(TerrainLayerChunk chunk, vec3 worldDirection)
+{
+  return vec3(dot(chunk.worldToObject[0].xyz, worldDirection), dot(chunk.worldToObject[1].xyz, worldDirection),
+              dot(chunk.worldToObject[2].xyz, worldDirection));
+}
+
+// The world-space direction along which an object-space coordinate direction increases: the
+// object-space gradient taken through the transpose of the world-to-object transform.
+vec3 terrainLayerChunkGradient(TerrainLayerChunk chunk, vec3 objectGradient)
+{
+  return chunk.worldToObject[0].xyz * objectGradient.x + chunk.worldToObject[1].xyz * objectGradient.y +
+         chunk.worldToObject[2].xyz * objectGradient.z;
+}
+
+uint terrainLayerFlagsRead(uint layerIndex)
+{
+  const vec4 packed = terrainLayerTableRead(cb.terrainLayerArgs.layerOffset + layerIndex * kTerrainLayerTexels + 3);
+  return uint(packed.x) | (uint(packed.y) << 24);
+}
+
+uint terrainLayerMaskTextureRead(uint layerIndex)
+{
+  return uint(terrainLayerTableRead(cb.terrainLayerArgs.layerOffset + layerIndex * kTerrainLayerTexels + 2).z);
+}
+
+TerrainLayer terrainLayerRead(uint layerIndex)
+{
+  const uint texel = cb.terrainLayerArgs.layerOffset + layerIndex * kTerrainLayerTexels;
+  const vec4 u = terrainLayerTableRead(texel);
+  const vec4 v = terrainLayerTableRead(texel + 1);
+  const vec4 indices = terrainLayerTableRead(texel + 2);
+
+  TerrainLayer layer;
+  layer.texcoordU = u.xyz;
+  layer.texcoordV = v.xyz;
+  layer.colorTextureIndex = uint(u.w);
+  layer.normalTextureIndex = uint(v.w);
+  layer.roughnessTextureIndex = uint(indices.x);
+  layer.metallicTextureIndex = uint(indices.y);
+  layer.maskTextureIndex = uint(indices.z);
+  layer.samplerIndex = uint(indices.w);
+  layer.flags = terrainLayerFlagsRead(layerIndex);
+  return layer;
+}
 
 vec2 terrainLayerProject(uint flags, vec3 v)
 {
@@ -56,27 +137,53 @@ TerrainLayerTexcoords terrainLayerTexcoords(
   return texcoords;
 }
 
-vec4 terrainLayerRead(uint textureIndex, uint samplerIndex, TerrainLayerTexcoords texcoords)
+vec4 terrainLayerSample(uint textureIndex, uint samplerIndex, TerrainLayerTexcoords texcoords)
 {
   return textures[nonuniformEXT(textureIndex)].SampleGrad(
     samplers[nonuniformEXT(samplerIndex)], texcoords.texcoord, texcoords.gradientX, texcoords.gradientY);
 }
 
-// Finds the chunk a world position lies over. A chunk covers 0..1 of its mask.
-bool terrainLayersFindChunk(vec3 position, out uint chunkIndex, out vec3 objectPosition, out vec2 maskTexcoord)
+// Finds the chunk a world position lies over, among the few the position's grid cell names.
+// A chunk covers 0..1 of its mask.
+bool terrainLayersFindChunk(vec3 position, out TerrainLayerChunk chunk, out vec3 objectPosition, out vec2 maskTexcoord)
 {
-  chunkIndex = 0;
   objectPosition = vec3(0);
   maskTexcoord = vec2(0);
 
-  for (uint i = 0; i < cb.terrainLayerArgs.chunkCount; i++)
+  const uint axis0 = cb.terrainLayerArgs.gridAxes & 0x3;
+  const uint axis1 = (cb.terrainLayerArgs.gridAxes >> 2) & 0x3;
+  const vec2 cell = floor(
+    (vec2(position[axis0], position[axis1]) - cb.terrainLayerArgs.gridOrigin) / cb.terrainLayerArgs.gridCellSize);
+  if (any(cell < 0.0) || cell.x >= float(cb.terrainLayerArgs.gridWidth) || cell.y >= float(cb.terrainLayerArgs.gridHeight))
   {
-    const vec3 candidate = mul(cb.terrainLayerArgs.chunks[i].worldToObject, vec4(position, 1.0)).xyz;
-    const vec2 texcoord = candidate.xz * cb.terrainLayerArgs.chunks[i].maskScale;
+    return false;
+  }
+
+  const vec4 candidates = terrainLayerTableRead(uint(cell.y) * cb.terrainLayerArgs.gridWidth + uint(cell.x));
+
+  for (uint i = 0; i < kMaxTerrainLayerGridCandidates; i++)
+  {
+    if (candidates[i] == 0.0)
+    {
+      break;
+    }
+
+    const uint texel = cb.terrainLayerArgs.chunkOffset + (uint(candidates[i]) - 1) * kTerrainLayerChunkTexels;
+    chunk.worldToObject[0] = terrainLayerTableRead(texel);
+    chunk.worldToObject[1] = terrainLayerTableRead(texel + 1);
+    chunk.worldToObject[2] = terrainLayerTableRead(texel + 2);
+    const vec4 projection = terrainLayerTableRead(texel + 3);
+    chunk.projectionOrigin = projection.xyz;
+    chunk.maskScale = projection.w;
+
+    const vec3 candidate = terrainLayerChunkPoint(chunk, position);
+    const vec2 texcoord = candidate.xz * chunk.maskScale;
 
     if (all(texcoord >= 0.0) && all(texcoord <= 1.0))
     {
-      chunkIndex = i;
+      const vec4 range = terrainLayerTableRead(texel + 4);
+      chunk.firstLayer = uint(range.x);
+      chunk.layerCount = uint(range.y);
       objectPosition = candidate;
       maskTexcoord = texcoord;
       return true;
@@ -96,16 +203,14 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
   blend.roughness = 0;
   blend.metallic = 0;
 
-  uint chunkIndex;
+  TerrainLayerChunk chunk;
   vec3 objectPosition;
   vec2 maskTexcoord;
-  if (!terrainLayersFindChunk(surfaceInteraction.position, chunkIndex, objectPosition, maskTexcoord))
+  if (!terrainLayersFindChunk(surfaceInteraction.position, chunk, objectPosition, maskTexcoord))
   {
     return blend;
   }
 
-  const TerrainLayerChunk chunk = cb.terrainLayerArgs.chunks[chunkIndex];
-  const mat3 worldToObject = mat3(chunk.worldToObject);
   const vec3 projectedPosition = objectPosition + chunk.projectionOrigin;
 
   // The ray cone's footprint on the surface, as two axes; see computeAnisotropicEllipseAxes.
@@ -117,8 +222,8 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
   vec3 ellipseAxis1 = cross(triangleNormal, ellipseAxis0);
   const vec3 planeProjection1 = ellipseAxis1 - dot(coneDirection, ellipseAxis1) * coneDirection;
   ellipseAxis1 *= minimalRayInteraction.coneRadius / max(0.0001, length(planeProjection1));
-  const vec3 objectEllipseAxis0 = mul(worldToObject, ellipseAxis0);
-  const vec3 objectEllipseAxis1 = mul(worldToObject, ellipseAxis1);
+  const vec3 objectEllipseAxis0 = terrainLayerChunkDirection(chunk, ellipseAxis0);
+  const vec3 objectEllipseAxis1 = terrainLayerChunkDirection(chunk, ellipseAxis1);
 
   // Composite the coverage in submission order, keeping the layers that weigh the most.
   uint keptLayer[kMaxTerrainLayersBlended];
@@ -128,19 +233,19 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
   for (uint i = 0; i < chunk.layerCount; i++)
   {
     const uint layerIndex = chunk.firstLayer + i;
-    const TerrainLayer layer = cb.terrainLayerArgs.layers[layerIndex];
-    const float alphaReference = float(layer.flags & TERRAIN_LAYER_ALPHA_REFERENCE_MASK) / 255.0;
+    const uint flags = terrainLayerFlagsRead(layerIndex);
+    const float alphaReference = float(flags & TERRAIN_LAYER_ALPHA_REFERENCE_MASK) / 255.0;
 
     float coverage = 1.0;
-    if (layer.flags & TERRAIN_LAYER_FLAG_HAS_MASK)
+    if (flags & TERRAIN_LAYER_FLAG_HAS_MASK)
     {
-      const uint maskTextureIndex = layer.maskTextureAndSamplerIndex & 0xFFFF;
-      coverage = textures[nonuniformEXT(maskTextureIndex)].SampleLevel(
+      coverage = textures[nonuniformEXT(terrainLayerMaskTextureRead(layerIndex))].SampleLevel(
         samplers[nonuniformEXT(cb.terrainLayerArgs.maskSamplerIndex)], maskTexcoord, 0).a;
 
-      if ((layer.flags & TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE) && coverage > alphaReference)
+      if ((flags & TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE) && coverage > alphaReference)
       {
-        coverage *= terrainLayerRead(layer.colorAndNormalTextureIndex & 0xFFFF, layer.maskTextureAndSamplerIndex >> 16,
+        const TerrainLayer layer = terrainLayerRead(layerIndex);
+        coverage *= terrainLayerSample(layer.colorTextureIndex, layer.samplerIndex,
           terrainLayerTexcoords(layer, projectedPosition, objectEllipseAxis0, objectEllipseAxis1)).a;
       }
 
@@ -186,18 +291,13 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
       continue;
     }
 
-    const TerrainLayer layer = cb.terrainLayerArgs.layers[keptLayer[k]];
+    const TerrainLayer layer = terrainLayerRead(keptLayer[k]);
     const TerrainLayerTexcoords texcoords = terrainLayerTexcoords(layer, projectedPosition, objectEllipseAxis0, objectEllipseAxis1);
-    const uint samplerIndex = layer.maskTextureAndSamplerIndex >> 16;
-    const uint colorTextureIndex = layer.colorAndNormalTextureIndex & 0xFFFF;
-    const uint normalTextureIndex = layer.colorAndNormalTextureIndex >> 16;
-    const uint roughnessTextureIndex = layer.roughnessAndMetallicTextureIndex & 0xFFFF;
-    const uint metallicTextureIndex = layer.roughnessAndMetallicTextureIndex >> 16;
 
     vec3 albedo = vec3(1);
-    if (colorTextureIndex != uint(BINDING_INDEX_INVALID))
+    if (layer.colorTextureIndex != uint(BINDING_INDEX_INVALID))
     {
-      albedo = terrainLayerRead(colorTextureIndex, samplerIndex, texcoords).rgb;
+      albedo = terrainLayerSample(layer.colorTextureIndex, layer.samplerIndex, texcoords).rgb;
     }
     if (!(layer.flags & TERRAIN_LAYER_FLAG_COLOR_IS_LINEAR))
     {
@@ -205,14 +305,14 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
     }
 
     vec3 layerNormal = geometryNormal;
-    if (normalTextureIndex != uint(BINDING_INDEX_INVALID))
+    if (layer.normalTextureIndex != uint(BINDING_INDEX_INVALID))
     {
       const vec3 tangentNormal = unsignedOctahedralToHemisphereDirection(
-        terrainLayerRead(normalTextureIndex, samplerIndex, texcoords).xy, cb.opaqueMaterialArgs.normalIntensity);
+        terrainLayerSample(layer.normalTextureIndex, layer.samplerIndex, texcoords).xy, cb.opaqueMaterialArgs.normalIntensity);
 
       // The layer's tangent frame: the directions its texture coordinates increase along, on the surface.
-      const vec3 worldU = mul(terrainLayerUnproject(layer.flags, layer.texcoordU.xy), worldToObject);
-      const vec3 worldV = mul(terrainLayerUnproject(layer.flags, layer.texcoordV.xy), worldToObject);
+      const vec3 worldU = terrainLayerChunkGradient(chunk, terrainLayerUnproject(layer.flags, layer.texcoordU.xy));
+      const vec3 worldV = terrainLayerChunkGradient(chunk, terrainLayerUnproject(layer.flags, layer.texcoordV.xy));
       const vec3 tangent = worldU - dot(worldU, geometryNormal) * geometryNormal;
       const vec3 bitangent = worldV - dot(worldV, geometryNormal) * geometryNormal;
       const float tangentLength = length(tangent);
@@ -227,15 +327,15 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
     }
 
     float roughness = float((layer.flags >> TERRAIN_LAYER_ROUGHNESS_SHIFT) & 0xFF) / 255.0;
-    if (roughnessTextureIndex != uint(BINDING_INDEX_INVALID))
+    if (layer.roughnessTextureIndex != uint(BINDING_INDEX_INVALID))
     {
-      roughness = terrainLayerRead(roughnessTextureIndex, samplerIndex, texcoords).x;
+      roughness = terrainLayerSample(layer.roughnessTextureIndex, layer.samplerIndex, texcoords).x;
     }
 
     float metallic = float((layer.flags >> TERRAIN_LAYER_METALLIC_SHIFT) & 0xFF) / 255.0;
-    if (metallicTextureIndex != uint(BINDING_INDEX_INVALID))
+    if (layer.metallicTextureIndex != uint(BINDING_INDEX_INVALID))
     {
-      metallic = terrainLayerRead(metallicTextureIndex, samplerIndex, texcoords).x;
+      metallic = terrainLayerSample(layer.metallicTextureIndex, layer.samplerIndex, texcoords).x;
     }
 
     blend.albedo += weight * albedo;

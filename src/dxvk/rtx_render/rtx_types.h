@@ -625,6 +625,10 @@ struct TerrainLayerDraw {
   };
 
   bool enabled = false;
+  // Kept in its chunk from frame to frame, until the chunk is released.
+  bool retained = false;
+  // Not a layer: geometry whose surface is evaluated from the layers of the chunk it lies over.
+  bool receiver = false;
   Projection projection = Projection::XZ;
   bool colorAlphaInCoverage = false;
   // Coverage not greater than this is no coverage.

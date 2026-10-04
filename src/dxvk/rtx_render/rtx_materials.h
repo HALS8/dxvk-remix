@@ -176,6 +176,7 @@ struct RtSurface {
     flags1 |= isMotionBlurMaskOut ?           (1 << 28) : 0;
     flags1 |= skipSurfaceInteractionSpritesheetAdjustment ? (1 << 29) : 0;
     flags1 |= isPreservePath ?                (1u << 30) : 0;
+    flags1 |= isTerrainLayerReceiver ?        (1u << 31) : 0;
 
     writeGPUHelper(data, offset, flags1);
 
@@ -348,6 +349,8 @@ struct RtSurface {
   // zenith gate that consumed it.
   bool isMotionBlurMaskOut = false;
   bool skipSurfaceInteractionSpritesheetAdjustment = false;
+  // Terrain without layers of its own, evaluated from the terrain layer chunk it lies over.
+  bool isTerrainLayerReceiver = false;
 
   RtTextureArgSource textureColorArg1Source = RtTextureArgSource::Texture;
   RtTextureArgSource textureColorArg2Source = RtTextureArgSource::None;

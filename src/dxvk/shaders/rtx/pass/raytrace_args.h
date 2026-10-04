@@ -97,13 +97,30 @@ struct TerrainArgs {
 };
 
 // Layered terrain: the chunks whose layers are evaluated at a hit, and their layers in the order
-// the game composites them. Texture and sampler indices are 16 bit, BINDING_INDEX_INVALID where
-// a layer has no such texture.
-static const uint kMaxTerrainLayerChunks = 32;
-static const uint kMaxTerrainLayers = 384;
+// the game composites them. The table is a float texture kTerrainLayerTableWidth texels wide,
+// read by texel number; every integer in it is below 2^24, so a float holds it exactly.
+//
+//   Grid, from texel 0: gridWidth x gridHeight cells over the chunks' footprints. A cell holds up
+//     to four chunk numbers plus one, 0 where there is none, in the order they are to be tried.
+//   Chunks, from chunkOffset, kTerrainLayerChunkTexels each:
+//     0-2  rows of the world-to-object transform
+//     3    xyz: added to the object-space position before a colour projection
+//          w: object-space XZ position times this is the mask texcoord, 0..1 over the chunk
+//     4    x: number of the chunk's first layer, y: its layer count
+//   Layers, from layerOffset, kTerrainLayerTexels each. Texture and sampler indices are
+//   BINDING_INDEX_INVALID where a layer has no such texture:
+//     0    xyz: U of the colour texcoord, w: colour texture
+//     1    xyz: V of the colour texcoord, w: normal texture
+//          Colour texcoord = (dot(p, U), dot(p, V)) for the projected position p = (a, b, 1)
+//     2    x: roughness texture, y: metallic texture, z: mask texture, w: the colour texture's sampler
+//     3    x: flags bits 0-23, y: flags bits 24-31
+static const uint kTerrainLayerTableWidth = 1024;
+static const uint kTerrainLayerChunkTexels = 5;
+static const uint kTerrainLayerTexels = 4;
+static const uint kMaxTerrainLayerGridCandidates = 4;
 static const uint kMaxTerrainLayersBlended = 4;
 
-// TerrainLayer::flags
+// Layer flags
 #define TERRAIN_LAYER_ALPHA_REFERENCE_MASK 0xFFu          // coverage not greater than this / 255 is none
 #define TERRAIN_LAYER_ROUGHNESS_SHIFT 8u                  // roughness constant * 255
 #define TERRAIN_LAYER_METALLIC_SHIFT 16u                  // metallic constant * 255
@@ -113,40 +130,20 @@ static const uint kMaxTerrainLayersBlended = 4;
 #define TERRAIN_LAYER_FLAG_COLOR_ALPHA_IN_COVERAGE (1u << 27)
 #define TERRAIN_LAYER_FLAG_COLOR_IS_LINEAR (1u << 28)     // the sampler linearises the colour texture
 
-struct TerrainLayer {
-  // Colour texcoord = (dot(p, texcoordU), dot(p, texcoordV)) for the projected position p = (a, b, 1)
-  vec3 texcoordU;
-  uint colorAndNormalTextureIndex;
-
-  vec3 texcoordV;
-  uint roughnessAndMetallicTextureIndex;
-
-  uint maskTextureAndSamplerIndex;    // The sampler is the colour texture's
-  uint flags;
-  uint pad0;
-  uint pad1;
-};
-
-struct TerrainLayerChunk {
-  mat4 worldToObject;
-
-  vec3 projectionOrigin;    // Added to the object-space position before a colour projection
-  float maskScale;          // Object-space XZ position times this is the mask texcoord, 0..1 over the chunk
-
-  uint firstLayer;
-  uint layerCount;
-  uint pad0;
-  uint pad1;
-};
-
 struct TerrainLayerArgs {
   uint chunkCount;          // 0: terrain is read from the cascade alone
   uint maskSamplerIndex;
   float minBlendWeight;     // Layers weighing less are not sampled
-  uint pad0;
+  uint tableTextureIndex;
 
-  TerrainLayerChunk chunks[kMaxTerrainLayerChunks];
-  TerrainLayer layers[kMaxTerrainLayers];
+  vec2 gridOrigin;          // World position of the grid's first cell, along its two axes
+  float gridCellSize;
+  uint gridAxes;            // The world axes the grid spans: bits 0-1 the first, bits 2-3 the second
+
+  uint gridWidth;
+  uint gridHeight;
+  uint chunkOffset;
+  uint layerOffset;
 };
 
 struct NeeCacheArgs {

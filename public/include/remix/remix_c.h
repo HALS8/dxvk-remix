@@ -611,6 +611,16 @@ extern "C" {
   //                transform. A chunk's layers cover it between them, so a caller that can
   //                submit the whole chunk once marks its other layer draws with this, and they
   //                are recorded in order without being rendered.
+  //   bit  12      REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED: with DESCRIPTION_ONLY, the layer joins a
+  //                chunk that is kept from frame to frame until released, instead of being
+  //                described again every frame. A chunk described for the current frame takes
+  //                precedence over a retained chunk it overlaps.
+  //   bit  13      REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE: with DESCRIPTION_ONLY, the draw describes
+  //                no layer; the retained chunk with its world transform is dropped.
+  //   bit  14      REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER: the draw is not a layer (ENABLE clear)
+  //                but terrain geometry without layers of its own, such as a distant level of
+  //                detail. Where it lies over a chunk its surface is evaluated from the chunk's
+  //                layers; elsewhere it keeps its own material.
   //   bits 16-23   alpha reference: coverage not greater than this (out of 255) is no coverage
   //
   // The projected position is (object-space position + origin), with the origin given as three
@@ -644,9 +654,14 @@ extern "C" {
   #define REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_ZY 2u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE 0x400u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY 0x800u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED 0x1000u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE 0x2000u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER 0x4000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT 16u
 
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY 0x1u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED 0x2u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER 0x4u
 
 
   typedef struct remixapi_AnimatedFloat1D {

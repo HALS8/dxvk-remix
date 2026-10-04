@@ -671,7 +671,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   // supplying opacity, emission and displacement.
   TerrainLayerBlend terrainLayerBlend;
   terrainLayerBlend.valid = false;
-  if (isBakedTerrain && cb.terrainLayerArgs.chunkCount != 0)
+  if ((isBakedTerrain || surface.isTerrainLayerReceiver) && cb.terrainLayerArgs.chunkCount != 0)
   {
     terrainLayerBlend = terrainLayersEvaluate(surfaceInteraction, minimalRayInteraction);
   }

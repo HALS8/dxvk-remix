@@ -997,7 +997,9 @@ namespace dxvk {
 
   uint32_t D3D9Rtx::GetTerrainLayerState(uint32_t state) const {
     if (state == REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES) {
-      return REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY;
+      return REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY |
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED |
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER;
     }
     return m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
   }
@@ -1005,6 +1007,13 @@ namespace dxvk {
   bool D3D9Rtx::emitTerrainLayerDescription() {
     if (!(m_terrainLayerStates[0] & REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY)) {
       return false;
+    }
+
+    if (m_terrainLayerStates[0] & REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE) {
+      m_parent->EmitCs([cObjectToWorld = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)]](DxvkContext* ctx) {
+        static_cast<RtxContext*>(ctx)->getSceneManager().getTerrainLayers().releaseChunk(cObjectToWorld);
+      });
+      return true;
     }
 
     setTerrainLayerState();
@@ -1056,6 +1065,7 @@ namespace dxvk {
 
     const uint32_t description = state(REMIXAPI_D3D9_RS_TERRAIN_LAYER);
     if (!(description & REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE)) {
+      layer.receiver = description & REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER;
       return;
     }
 
@@ -1096,6 +1106,7 @@ namespace dxvk {
                                      floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y),
                                      floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z));
     layer.maskScale = floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE);
+    layer.retained = description & REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED;
     layer.enabled = true;
   }
 
