@@ -1554,6 +1554,60 @@ void marchCloudSlab(vec3   viewDirYUp,
 // a signature-only change with no render delta yet; it exists so a future depth-aware caller
 // (Stage 4) does not have to re-plumb the deck separately from layer 1).
 // =============================================================================
+// Ground fog (layer 2 with cloudLayer2GroundFog set) is a FLAT slab in height above the ground
+// datum, which is what args.cameraWorldPosYUpKm.y measures. Flat rather than a spherical shell for
+// two reasons. Fog a few tens of metres deep needs its height resolved far below what length()
+// keeps at planet radius in fp32. And a shell cannot lie below the datum without the planet
+// clipping it, which is exactly where valley fog sits, so the planet is not an occluder here: the
+// primary surface clamp the caller passes is. The slab has a top and no underside: below its base
+// the fog stays at full density down to whatever surface ends the ray, so a hollow lower than the
+// level the base was set at is filled rather than left clear. A ray that never leaves the fog ends
+// where the fog along it has become opaque.
+bool groundFogSpan(vec3 rayDirYUp, float eyeHeightKm, float baseKm, float thicknessKm,
+                   float peakExtinctionPerKm, out float tEntry, out float tExit) {
+  const float kOpaqueOpticalDepth = 8.0f;
+  tEntry = 0.0f;
+  tExit  = -1.0f;
+
+  const float toTop = baseKm + thicknessKm - eyeHeightKm;
+  float tFar = 1e9f;
+  if (abs(rayDirYUp.y) < 1e-6f) {
+    if (toTop < 0.0f) return false;
+  } else {
+    const float tTop = toTop / rayDirYUp.y;
+    if (rayDirYUp.y > 0.0f) {
+      if (tTop <= 0.0f) return false;
+      tFar = tTop;
+    } else {
+      tEntry = max(tTop, 0.0f);
+    }
+  }
+
+  tExit = min(tFar, tEntry + kOpaqueOpticalDepth / max(peakExtinctionPerKm, 1e-4f));
+  return true;
+}
+
+// Ground fog density: densest at the base, thinning to nothing at the top, with the detail volume
+// lifting and lowering the top so it is not a level sheet. No cloud field and no coverage, so it is
+// an unbroken layer whatever the weather is doing overhead. noiseSigned returns the zero-mean
+// excursion for the lighting evaluator's relief term.
+float sampleGroundFogDensity(vec3 worldPosKm, float heightFraction, float densityScale,
+                             AtmosphereArgs args, Texture3D<float4> detailNoise,
+                             SamplerState cloudSampler, out float noiseSigned) {
+  noiseSigned = 0.0f;
+  if (args.cloudLayer2GroundFogNoise > 0.0f) {
+    // Banks a few hundred metres across: the detail volume's repeat, several times finer than the
+    // erosion scale it is baked for. Drifts with the wind and rises like the cloud detail does.
+    const float kFogDetailPerTile = 6.0f;
+    const float freq = kFogDetailPerTile * args.cloudDetailScale / args.cloudNoiseTileKm;
+    const vec3 drift = vec3(args.cloudWindOffset.x, -args.cloudEvolutionOffsetY, args.cloudWindOffset.y);
+    noiseSigned = detailNoise.SampleLevel(cloudSampler, frac((worldPosKm - drift) * freq), 0).r - 0.5f;
+  }
+  const float below = saturate(1.0f - heightFraction + noiseSigned * args.cloudLayer2GroundFogNoise);
+  if (below <= 0.0f) return 0.0f;
+  return densityScale * pow(below, max(args.cloudLayer2GroundFogFalloff, 0.0f));
+}
+
 void marchEchoDeck(vec3   viewDirYUp,
                    float  pixelJitter,
                    float  slabAltitudeKm,
@@ -1582,11 +1636,16 @@ void marchEchoDeck(vec3   viewDirYUp,
                    inout float entryDistanceKm) {
   // Slab intersection via the shared helper (fork — 2026-09-05, world-space cloud migration
   // Stage 1) — see cloudSlabSpan's comment and marchCloudSlab's identical swap above.
+  const bool groundFog = args.cloudLayer2GroundFog > 0.5f;
   float tEntry, tExit;
+  if (groundFog) {
+    if (!groundFogSpan(viewDirYUp, args.cameraWorldPosYUpKm.y, slabAltitudeKm, slabThicknessKm,
+                       slabDensityScale * args.cloudDensity, tEntry, tExit)) return;
+  }
   // Piece 0 only: the echo deck is a deliberately cheap single-crossing approximation, and its
   // underside is thin cirrus rather than the primary deck's visible floor.
-  if (!cloudSlabSpan(viewDirYUp, ctx.planetCenterKm, ctx.planetRadiusKm,
-                     slabAltitudeKm, slabThicknessKm, /*spanPiece=*/0, tEntry, tExit)) return;
+  else if (!cloudSlabSpan(viewDirYUp, ctx.planetCenterKm, ctx.planetRadiusKm,
+                          slabAltitudeKm, slabThicknessKm, /*spanPiece=*/0, tEntry, tExit)) return;
   tEntry = max(tEntry, tMinClamp);
   if (tMaxClamp > 0.0f) {
     tExit = min(tExit, tMaxClamp);
@@ -1669,21 +1728,35 @@ void marchEchoDeck(vec3   viewDirYUp,
     float typeLocal     = saturate(slabTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
     float coverageLocal = saturate(slabCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
 
-    float hf = computeCloudHeightFractionC(samplePos, ctx.planetCenterWorldKm, ctx.planetRadiusKm,
-                                           slabAltitudeKm, slabThicknessKm);
+    float hf;
     float nubisProfile;
     float detailSigned;
     float nubisSdfKm;
     float nubisSdfStepKm;
-    float density = sampleCloudDensityNubis3(samplePos + fieldOffsetKm, hf, typeLocal,
-                                             coverageLocal, slabDensityScale,
-                                             /*cameraDistKm=*/t,
-                                             args.cloudDetailLodEnable != 0u ? stepLen : 0.0f, args,
-                                             AtmosphereCloudNvdfSdf, AtmosphereCloudDetailNoise3D,
-                                             AtmosphereCloudNoise3DSampler,
-                                             /*coarseOd=*/false,
-                                             nubisProfile, detailSigned, nubisSdfKm,
-                                             nubisSdfStepKm);
+    float density;
+    if (groundFog) {
+      hf = saturate((samplePos.y - slabAltitudeKm) / max(slabThicknessKm, 1e-6f));
+      density = sampleGroundFogDensity(samplePos, hf, slabDensityScale, args,
+                                       AtmosphereCloudDetailNoise3D, AtmosphereCloudNoise3DSampler,
+                                       detailSigned);
+      // The evaluator lights by profile: 1 is all sun-lit body, 0 all sky ambient. Fog is lit by
+      // both at every height, a little more by the sky toward its top.
+      nubisProfile   = 0.5f * (1.0f - hf);
+      nubisSdfKm     = -(1.0f - hf) * slabThicknessKm;
+      nubisSdfStepKm = 0.0f;
+    } else {
+      hf = computeCloudHeightFractionC(samplePos, ctx.planetCenterWorldKm, ctx.planetRadiusKm,
+                                       slabAltitudeKm, slabThicknessKm);
+      density = sampleCloudDensityNubis3(samplePos + fieldOffsetKm, hf, typeLocal,
+                                         coverageLocal, slabDensityScale,
+                                         /*cameraDistKm=*/t,
+                                         args.cloudDetailLodEnable != 0u ? stepLen : 0.0f, args,
+                                         AtmosphereCloudNvdfSdf, AtmosphereCloudDetailNoise3D,
+                                         AtmosphereCloudNoise3DSampler,
+                                         /*coarseOd=*/false,
+                                         nubisProfile, detailSigned, nubisSdfKm,
+                                         nubisSdfStepKm);
+    }
     if (density < 0.001f) {
       // Same SDF empty-space index skip as layer 1's fixed-step march.
       if (args.nvdfStepScale > 0.0f) {
@@ -1724,7 +1797,10 @@ void marchEchoDeck(vec3   viewDirYUp,
     if (ctx.moonActive) {
       float moonOpticalDepth = 0.0f;
 #if !CLOUD_PROFILE_NO_MOON_SHADOWS
-      if (density >= kMoonShadowSkipDensity) {
+      if (groundFog) {
+        // The slab-aware shadow tap marches the cloud field, which fog does not have.
+        moonOpticalDepth = dSunProxy;
+      } else if (density >= kMoonShadowSkipDensity) {
         moonOpticalDepth = sampleCloudSunOpticalDepth_localSlab(
             samplePos, ctx.combinedMoonDir, typeLocal, coverageLocal,
             slabAltitudeKm, slabThicknessKm, slabDensityScale, fieldOffsetKm,
@@ -1781,6 +1857,64 @@ void marchEchoDeck(vec3   viewDirYUp,
   }
 }
 
+// Layer 2 — the echo deck, or ground fog when cloudLayer2GroundFog is set. Same slab model as
+// layer 1 at its own altitude, marched cheaply. Reads its own coverage/type spread via an args copy
+// so the shared density sampler applies the deck's variation; its mean/density/seed come through
+// marchEchoDeck's slab params directly.
+void marchSecondLayer(vec3 viewDirYUp, float pixelJitter, float tMinClamp, float tMaxClamp,
+                      CloudShadeContext ctx, AtmosphereArgs args,
+                      inout vec3 accumColor, inout float viewTransmittance,
+                      inout float sumWeightedDistKm, inout float sumWeight,
+                      inout float entryDistanceKm) {
+  if (args.cloudLayer2Enable == 0u || viewTransmittance <= kCloudExitTransmittance) return;
+
+  AtmosphereArgs args2 = args;
+  // Deck coverage spread is forced to 0: the spread amplified the single-
+  // octave Worley coverage lattice into a fine tiled/stippled texture at the
+  // deck's distance (the cells are ~3 km, tiny in angle from far away). With
+  // spread 0 the deck's coverage collapses to a uniform slabCoverageMean
+  // sheet — no coverage field, no tiling. (The cloudLayer2CoverageSpread
+  // option was removed; type spread is still available.)
+  args2.cloudCoverageSpread = 0.0f;
+  args2.cloudTypeSpread     = args.cloudLayer2TypeSpread;
+  // Decouple the deck's density from the MAIN cloudDensity slider. cloudDensity
+  // is the shared extinction coefficient (used by the march, the lighting
+  // sigma/downTau, and the SDF proxy), so moving the main Density slider
+  // otherwise scaled BOTH decks — most visibly the deck's opacity. Pin the
+  // deck's extinction to a fixed reference equal to cloudDensity's 1.8 default,
+  // so (a) the main slider no longer bleeds into the deck and (b) the deck look
+  // is unchanged at the default main density. The deck's OWN opacity stays on
+  // cloudLayer2DensityScale (the sampler's slabDensityScale). marchEchoDeck
+  // threads args2 through the sampler + lighting + moon path, so this decouples
+  // the deck's density consistently, not just its march extinction. Keep this
+  // matched to cloudDensity's RTX_OPTION default if that ever changes.
+  const float kEchoDeckExtinction = 1.8f;
+  args2.cloudDensity = kEchoDeckExtinction;
+  // The shared lighting evaluator (evalNubisCubedSampleCore and the
+  // sampler's SDF/profile inputs) reads args.cloudThickness
+  // and args.cloudTypeMean DIRECTLY — they don't get the deck's slab params
+  // the way the density sampler does. Left unset, the deck's SDF proxy,
+  // dim profile and underside optical depth would key on layer 1's thickness
+  // and type instead of the deck's own. Point them at the deck's values so
+  // the deck's shape-driven lighting matches its geometry, not layer 1's.
+  // (Coverage already flows through coverageLocal, so it needs no override.)
+  args2.cloudThickness = args.cloudLayer2Thickness;
+  args2.cloudTypeMean  = args.cloudLayer2TypeMean;
+  // Independent deck albedo — the one look knob split out from layer 1 (the
+  // march composite multiplies all scatter terms by args.cloudColor). Defaults
+  // to the same near-white, so this is a no-op until the user tints it.
+  args2.cloudColor     = args.cloudLayer2Color;
+  marchEchoDeck(viewDirYUp, pixelJitter,
+                args.cloudLayer2Altitude, args.cloudLayer2Thickness,
+                args.cloudLayer2TypeMean, args.cloudLayer2CoverageMean,
+                args.cloudLayer2DensityScale,
+                args.cloudLayer2NoiseSeed,
+                tMinClamp, tMaxClamp,
+                ctx, args2,
+                accumColor, viewTransmittance,
+                sumWeightedDistKm, sumWeight, entryDistanceKm);
+}
+
 // =============================================================================
 // Both-layer march wrapper — the layer-1 cumulus slab plus the optional
 // layer-2 echo deck. Shared so the secondary-ray LUT bake composites the
@@ -1828,6 +1962,15 @@ void marchCloudLayers(vec3  viewDirYUp,
   float sumWeightedDistKm = 0.0f;
   float sumWeight = 0.0f;
 
+  // Ground fog lies between the eye and the cloud deck, so it is marched first to keep the
+  // accumulation front to back; the echo deck is above layer 1 and follows it.
+  const bool secondLayerFirst = args.cloudLayer2GroundFog > 0.5f;
+  if (secondLayerFirst) {
+    marchSecondLayer(viewDirYUp, pixelJitter, tMinClamp, tMaxClamp, ctx, args,
+                     accumColor, viewTransmittance,
+                     sumWeightedDistKm, sumWeight, entryDistanceKm);
+  }
+
   // Both slab crossings, near then far, so accumulation stays front-to-back (fork -- 2026-09-06,
   // fly-through polish). The second call returns immediately unless the eye is above the deck base
   // looking down through it, which is the only configuration with two crossings -- so this costs a
@@ -1848,56 +1991,10 @@ void marchCloudLayers(vec3  viewDirYUp,
                    entryDistanceKm, sumWeightedDistKm, sumWeight);
   }
 
-  // Layer 2 echo deck — same slab model at a gapped altitude, marched cheaply.
-  // Reads its own coverage/type spread via an args copy so the shared density
-  // sampler applies the deck's variation; its mean/density/seed come through
-  // marchEchoDeck's slab params directly.
-  if (args.cloudLayer2Enable != 0u && viewTransmittance > kCloudExitTransmittance) {
-    AtmosphereArgs args2 = args;
-    // Deck coverage spread is forced to 0: the spread amplified the single-
-    // octave Worley coverage lattice into a fine tiled/stippled texture at the
-    // deck's distance (the cells are ~3 km, tiny in angle from far away). With
-    // spread 0 the deck's coverage collapses to a uniform slabCoverageMean
-    // sheet — no coverage field, no tiling. (The cloudLayer2CoverageSpread
-    // option was removed; type spread is still available.)
-    args2.cloudCoverageSpread = 0.0f;
-    args2.cloudTypeSpread     = args.cloudLayer2TypeSpread;
-    // Decouple the deck's density from the MAIN cloudDensity slider. cloudDensity
-    // is the shared extinction coefficient (used by the march, the lighting
-    // sigma/downTau, and the SDF proxy), so moving the main Density slider
-    // otherwise scaled BOTH decks — most visibly the deck's opacity. Pin the
-    // deck's extinction to a fixed reference equal to cloudDensity's 1.8 default,
-    // so (a) the main slider no longer bleeds into the deck and (b) the deck look
-    // is unchanged at the default main density. The deck's OWN opacity stays on
-    // cloudLayer2DensityScale (the sampler's slabDensityScale). marchEchoDeck
-    // threads args2 through the sampler + lighting + moon path, so this decouples
-    // the deck's density consistently, not just its march extinction. Keep this
-    // matched to cloudDensity's RTX_OPTION default if that ever changes.
-    const float kEchoDeckExtinction = 1.8f;
-    args2.cloudDensity = kEchoDeckExtinction;
-    // The shared lighting evaluator (evalNubisCubedSampleCore and the
-    // sampler's SDF/profile inputs) reads args.cloudThickness
-    // and args.cloudTypeMean DIRECTLY — they don't get the deck's slab params
-    // the way the density sampler does. Left unset, the deck's SDF proxy,
-    // dim profile and underside optical depth would key on layer 1's thickness
-    // and type instead of the deck's own. Point them at the deck's values so
-    // the deck's shape-driven lighting matches its geometry, not layer 1's.
-    // (Coverage already flows through coverageLocal, so it needs no override.)
-    args2.cloudThickness = args.cloudLayer2Thickness;
-    args2.cloudTypeMean  = args.cloudLayer2TypeMean;
-    // Independent deck albedo — the one look knob split out from layer 1 (the
-    // march composite multiplies all scatter terms by args.cloudColor). Defaults
-    // to the same near-white, so this is a no-op until the user tints it.
-    args2.cloudColor     = args.cloudLayer2Color;
-    marchEchoDeck(viewDirYUp, pixelJitter,
-                  args.cloudLayer2Altitude, args.cloudLayer2Thickness,
-                  args.cloudLayer2TypeMean, args.cloudLayer2CoverageMean,
-                  args.cloudLayer2DensityScale,
-                  args.cloudLayer2NoiseSeed,
-                  tMinClamp, tMaxClamp,
-                  ctx, args2,
-                  accumColor, viewTransmittance,
-                  sumWeightedDistKm, sumWeight, entryDistanceKm);
+  if (!secondLayerFirst) {
+    marchSecondLayer(viewDirYUp, pixelJitter, tMinClamp, tMaxClamp, ctx, args,
+                     accumColor, viewTransmittance,
+                     sumWeightedDistKm, sumWeight, entryDistanceKm);
   }
 
   // Report transmittance on the scale whose zero is the march's own exit threshold (fork --

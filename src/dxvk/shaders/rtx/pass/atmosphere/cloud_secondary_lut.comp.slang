@@ -115,7 +115,9 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   // writes the same.
   float effectiveCoverageMean = args.cloudCoverageMean;
   if (args.cloudLayer2Enable != 0u) {
-    effectiveCoverageMean = max(effectiveCoverageMean, args.cloudLayer2CoverageMean);
+    // Ground fog has no coverage field: it is there wherever it is enabled.
+    effectiveCoverageMean = max(effectiveCoverageMean,
+      args.cloudLayer2GroundFog > 0.5f ? 1.0f : args.cloudLayer2CoverageMean);
   }
   if (args.cloudEnabled < 0.5f || effectiveCoverageMean < 0.01f || args.cloudViewSamples == 0u) {
     cloudSecondaryLutOutput[pixelCoord] = vec4(0.0f, 0.0f, 0.0f, 1.0f);

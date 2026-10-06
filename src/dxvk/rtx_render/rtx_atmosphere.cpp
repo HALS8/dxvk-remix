@@ -1521,6 +1521,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudLayer2StepFloor     = RtxAtmosphere::cloudLayer2StepFloor();
     args.cloudLayer2StepMax       = RtxAtmosphere::cloudLayer2StepMax();
     args.cloudLayer2Color         = RtxAtmosphere::cloudLayer2Color();
+    args.cloudLayer2GroundFog        = RtxAtmosphere::cloudLayer2GroundFog() ? 1.0f : 0.0f;
+    args.cloudLayer2GroundFogFalloff = std::max(RtxAtmosphere::cloudLayer2GroundFogFalloff(), 0.0f);
+    args.cloudLayer2GroundFogNoise   = std::clamp(RtxAtmosphere::cloudLayer2GroundFogNoise(), 0.0f, 1.0f);
     args.cloudAerialHazePerKm = wx ? wx->cloudAerialHazePerKm : RtxAtmosphere::cloudAerialHazePerKm();
     args.cloudAerialFadePerKm = wx ? wx->cloudAerialFadePerKm : RtxAtmosphere::cloudAerialFadePerKm();
   }

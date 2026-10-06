@@ -1126,8 +1126,24 @@ void RtxAtmosphere::showCloudSettings(const WeatherSnapshot* weatherSnapshot) {
       "layer. Off by default. Voxel-grid terrain shadows still come "
       "from layer 1 only.");
     ImGui::BeginDisabled(!RtxAtmosphere::cloudLayer2Enable());
+    RemixGui::Checkbox("Layer 2 As Ground Fog", &RtxAtmosphere::cloudLayer2GroundFogObject());
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "Makes layer 2 an unbroken fog layer, densest at its base and thinning to its top, "
+      "independent of the cloud field and the weather's coverage. Its altitude may then be at or "
+      "below the ground datum.");
+    ImGui::BeginDisabled(!RtxAtmosphere::cloudLayer2GroundFog());
+    RemixGui::DragFloat("Ground Fog Falloff", &RtxAtmosphere::cloudLayer2GroundFogFalloffObject(),
+      0.01f, 0.0f, 8.0f, "%.2f", sliderFlags);
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "How quickly the fog thins with height. 0 is uniform up to a hard top; larger values keep "
+      "it close to the ground.");
+    RemixGui::DragFloat("Ground Fog Noise", &RtxAtmosphere::cloudLayer2GroundFogNoiseObject(),
+      0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "How far the detail noise lifts and lowers the fog's top, as a fraction of its depth.");
+    ImGui::EndDisabled();
     RemixGui::DragFloat("Layer 2 Altitude", &RtxAtmosphere::cloudLayer2BaseHeightMetersObject(),
-      50.0f, 500.0f, 20000.0f, "%.0f m", sliderFlags);
+      50.0f, RtxAtmosphere::cloudLayer2GroundFog() ? -20000.0f : 500.0f, 20000.0f, "%.0f m", sliderFlags);
     RemixGui::SetTooltipToLastWidgetOnHover(
       "Height of the second deck's underside above the ground datum, in metres. The default "
       "targets the cirrus band.");

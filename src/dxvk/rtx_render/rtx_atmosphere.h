@@ -1587,6 +1587,22 @@ public:
                "*DEPRECATED* replaced by rtx.atmosphere.cloudLayer2DepthMeters (same depth in metres). "
                "An existing value is migrated automatically; re-save your config to silence the notice.",
                args.onChangeCallback = &cloudLayer2ThicknessOnChange, args.flags = RtxOptionFlags::NoSave);
+    RTX_OPTION("rtx.atmosphere", bool, cloudLayer2GroundFog, false,
+               "Turns layer 2 from a high cloud deck into ground fog. The layer is then a flat slab "
+               "with no cloud field behind it: unbroken whatever the weather's coverage, densest at "
+               "its base and thinning to nothing at its top, and marched in front of layer 1 rather "
+               "than behind it. cloudLayer2BaseHeightMeters may be negative in this mode, because "
+               "the planet surface does not clip the slab: fog can fill terrain that lies below the "
+               "ground datum. Density, depth and color stay on their cloudLayer2* options; coverage, "
+               "type and noise seed are unused.");
+    RTX_OPTION("rtx.atmosphere", float, cloudLayer2GroundFogFalloff, 1.0f,
+               "How ground fog thins with height: density is (1 - height fraction) raised to this "
+               "power. 0 is uniform up to a hard top, 1 thins linearly, larger values keep the fog "
+               "close to the ground.");
+    RTX_OPTION("rtx.atmosphere", float, cloudLayer2GroundFogNoise, 0.5f,
+               "[0,1] how far the cloud detail noise lifts and lowers the top of ground fog, as a "
+               "fraction of the layer's depth. 0 is a level sheet. The noise drifts with the cloud "
+               "wind.");
     RTX_OPTION("rtx.atmosphere", float, cloudLayer2TypeMean, 0.6f,
                "[0,1] mean cloud type for layer 2. Low values (~0.05) sample "
                "the LUT's stratus-shaped column — appropriate for cirrus.");

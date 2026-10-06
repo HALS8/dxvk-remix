@@ -388,7 +388,9 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   // enabled with its own coverage) still passes the early-out.
   float effectiveCoverageMean = args.cloudCoverageMean;
   if (args.cloudLayer2Enable != 0u) {
-    effectiveCoverageMean = max(effectiveCoverageMean, args.cloudLayer2CoverageMean);
+    // Ground fog has no coverage field: it is there wherever it is enabled.
+    effectiveCoverageMean = max(effectiveCoverageMean,
+      args.cloudLayer2GroundFog > 0.5f ? 1.0f : args.cloudLayer2CoverageMean);
   }
   if (args.cloudEnabled < 0.5f || effectiveCoverageMean < 0.01f || args.cloudViewSamples == 0u) {
     for (uint sub = 0u; sub < period; ++sub) {

@@ -396,7 +396,10 @@ struct AtmosphereArgs {
 
 // NV-DXVK start: Use the active camera projection for Numos clouds.
   // Reserved former camera-basis slots retain the shared constant-buffer layout.
-  vec3  pad_cloudCamera0;
+  // Layer 2 as ground fog. Three floats in the first reserved camera-basis slot.
+  float cloudLayer2GroundFog;        // 0 = echo deck, 1 = ground fog (flat slab, no cloud field)
+  float cloudLayer2GroundFogFalloff; // Exponent on (1 - height fraction); 0 = uniform to the top
+  float cloudLayer2GroundFogNoise;   // [0,1] how far the detail noise moves the fog's top
   float cloudColumnTopVariation;   // [0,1] per-cloud tower-height jitter amount (0 = uniform tops)
 
   vec3  pad_cloudCamera1;
