@@ -587,6 +587,24 @@ namespace {
     args.milkyWayDustAmount          = 0.0f;
     args.milkyWayCoreColor           = vec3(0.0f, 0.0f, 0.0f);
     args.milkyWayDustColor           = vec3(0.0f, 0.0f, 0.0f);
+    // The aurora is evaluated per sky ray and its clock advances every frame.
+    args.auroraIntensityKR           = 0.0f;
+    args.auroraActivity              = 0.0f;
+    args.auroraDistanceKm            = 0.0f;
+    args.auroraLowerBorderKm         = 0.0f;
+    args.auroraPolewardXZ            = vec2(0.0f, 0.0f);
+    args.auroraFieldTanTilt          = 0.0f;
+    args.auroraTimeSeconds           = 0.0f;
+    args.auroraArcSpacingKm          = 0.0f;
+    args.auroraSheetThicknessKm      = 0.0f;
+    args.auroraVerticalExtentKm      = 0.0f;
+    args.auroraArcCount              = 0u;
+    args.auroraRayStrength           = 0.0f;
+    args.auroraFoldStrength          = 0.0f;
+    args.auroraRedRatio              = 0.0f;
+    args.auroraBlueRatio             = 0.0f;
+    args.auroraSheetWavelengthRatio  = 0.0f;
+    args.auroraViewSamples           = 0u;
   }
 
   float quantizeDirComponent(float v, float stepRad) {
@@ -1121,6 +1139,37 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.milkyWayDustAmount            = RtxAtmosphere::milkyWayDustAmount();
   args.milkyWayCoreColor             = RtxAtmosphere::milkyWayCoreColor();
   args.milkyWayDustColor             = RtxAtmosphere::milkyWayDustColor();
+
+  {
+    const float activity = std::clamp(RtxAtmosphere::auroraActivity(), 0.0f, 1.0f);
+    args.auroraIntensityKR = RtxAtmosphere::auroraEnabled()
+      ? std::max(RtxAtmosphere::auroraIntensityKR(), 0.0f) * (0.25f + 1.5f * activity)
+      : 0.0f;
+    args.auroraActivity      = activity;
+    args.auroraDistanceKm    = RtxAtmosphere::auroraDistanceKm();
+    args.auroraLowerBorderKm = std::max(RtxAtmosphere::auroraLowerBorderKm(), 10.0f);
+
+    const float bearingRad = RtxAtmosphere::auroraBearingDegrees() * dxvk::kDegreesToRadians;
+    args.auroraPolewardXZ = vec2(std::sin(bearingRad), std::cos(bearingRad));
+    const float inclinationDeg = std::clamp(RtxAtmosphere::auroraFieldInclinationDegrees(), 45.0f, 90.0f);
+    args.auroraFieldTanTilt = std::tan((90.0f - inclinationDeg) * dxvk::kDegreesToRadians);
+    args.auroraTimeSeconds  = args.timeSeconds * std::max(RtxAtmosphere::auroraSpeed(), 0.0f);
+
+    args.auroraArcSpacingKm     = std::max(RtxAtmosphere::auroraArcSpacingKm(), 1.0f);
+    args.auroraSheetThicknessKm = std::max(RtxAtmosphere::auroraSheetThicknessKm(), 0.25f);
+    args.auroraVerticalExtentKm = std::max(RtxAtmosphere::auroraVerticalExtentKm(), 1.0f);
+    args.auroraArcCount         = static_cast<uint32_t>(std::clamp(RtxAtmosphere::auroraArcCount(), 1, 4));
+
+    args.auroraRayStrength  = std::clamp(RtxAtmosphere::auroraRayStrength(), 0.0f, 1.0f);
+    args.auroraFoldStrength = std::clamp(RtxAtmosphere::auroraFoldStrength(), 0.0f, 1.0f);
+    args.auroraRedRatio     = std::max(RtxAtmosphere::auroraRedRatio(), 0.0f);
+    args.auroraBlueRatio    = std::max(RtxAtmosphere::auroraBlueRatio(), 0.0f);
+
+    args.auroraSheetWavelengthRatio = std::max(RtxAtmosphere::auroraSheetWavelengthRatio(), 2.0f);
+    args.auroraViewSamples          = static_cast<uint32_t>(std::clamp(RtxAtmosphere::auroraViewSamples(), 4, 96));
+    args.padAurora0 = 0u;
+    args.padAurora1 = 0u;
+  }
   // The former padMilkyWay0/1/2 slots (nvdfStepScale / nvdfBodyErosionStrength
   // / nubis3HFDetailStrength) are filled in the Nubis3 block below.
 

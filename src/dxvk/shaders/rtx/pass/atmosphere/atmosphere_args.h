@@ -867,4 +867,32 @@ struct AtmosphereArgs {
   uint  nightLightSelect;
   float moonDiskExposureEv;
 
+  // ----- Aurora (fork) -----
+  //
+  // Five whole 16-byte rows. Evaluated per sky ray in atmosphere_aurora.slangh
+  // and read by no bake, so every field is zeroed in normalizeForSkyLutCache.
+  float auroraIntensityKR;          // 557.7 nm brightness of a sheet crossed square-on, kR; 0 = off
+  float auroraActivity;             // [0,1] quiet arc -> active rayed, folded display
+  float auroraDistanceKm;           // Poleward distance of the arc system's centre; 0 = overhead
+  float auroraLowerBorderKm;        // Altitude of the display's lower border
+
+  vec2  auroraPolewardXZ;           // Unit direction toward the magnetic pole, Y-up XZ plane
+  float auroraFieldTanTilt;         // tan of the field lines' lean from vertical, toward the equator
+  float auroraTimeSeconds;          // Animation clock, already scaled by the speed option
+
+  float auroraArcSpacingKm;         // Spacing between the arcs of the system
+  float auroraSheetThicknessKm;     // Electron sheet thickness (the paper's w)
+  float auroraVerticalExtentKm;     // Scale height above the green peak for an unrayed arc
+  uint  auroraArcCount;             // [1, AURORA_MAX_ARCS]
+
+  float auroraRayStrength;          // [0,1] how strongly the display breaks into rays
+  float auroraFoldStrength;         // [0,1] how far folds and spirals wind the sheet
+  float auroraRedRatio;             // 630.0 nm peak brightness relative to 557.7 nm
+  float auroraBlueRatio;            // 427.8 nm peak brightness relative to 557.7 nm
+
+  float auroraSheetWavelengthRatio; // Boundary wavelength over twice the thickness (the paper's lambda / 2w)
+  uint  auroraViewSamples;          // March steps through the emitting shell, per arc
+  uint  padAurora0;
+  uint  padAurora1;
+
 };

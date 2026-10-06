@@ -380,6 +380,92 @@ namespace {
     }
   }
 
+  void renderAuroraUI() {
+    constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+    if (ImGui::TreeNode("Aurora")) {
+      RemixGui::Checkbox("Enabled##aurora", &RtxAtmosphere::auroraEnabledObject());
+      RemixGui::SetTooltipToLastWidgetOnHover(
+          "Draw an aurora in the night sky. It follows Night Exposure like every other night source.");
+      ImGui::BeginDisabled(!RtxAtmosphere::auroraEnabled());
+
+      RemixGui::DragFloat("Intensity", &RtxAtmosphere::auroraIntensityKRObject(),
+                          1.0f, 0.0f, 5000.0f, "%.0f kR", sliderFlags);
+      RemixGui::SetTooltipToLastWidgetOnHover(
+          "Green-line brightness of a curtain crossed square-on. 1 kR is about the Milky Way, "
+          "10 thin moonlit cirrus, 100 a bright coloured display, 1000 bright enough to cast shadows.");
+      RemixGui::DragFloat("Activity", &RtxAtmosphere::auroraActivityObject(),
+                          0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
+      RemixGui::SetTooltipToLastWidgetOnHover(
+          "0 = a quiet, dim, nearly homogeneous arc. 1 = substorm expansion: bright, rayed, tall, "
+          "folded and fast.");
+      RemixGui::DragFloat("Speed", &RtxAtmosphere::auroraSpeedObject(),
+                          0.01f, 0.0f, 10.0f, "%.2f", sliderFlags);
+      RemixGui::SetTooltipToLastWidgetOnHover("Time scale of the motion. 1 is real time.");
+
+      if (ImGui::TreeNode("Placement")) {
+        RemixGui::DragFloat("Distance", &RtxAtmosphere::auroraDistanceKmObject(),
+                            5.0f, -2000.0f, 2000.0f, "%.0f km", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Distance to the centre of the arc system, toward the magnetic pole. 0 = overhead "
+            "(corona), a few hundred = curtains in the poleward sky, ~1000 = a glow on the horizon.");
+        RemixGui::DragFloat("Bearing", &RtxAtmosphere::auroraBearingDegreesObject(),
+                            0.5f, -360.0f, 360.0f, "%.1f deg", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Azimuth of the magnetic pole, in the sun's and star axis's convention (0 = North).");
+        RemixGui::DragFloat("Field Inclination", &RtxAtmosphere::auroraFieldInclinationDegreesObject(),
+                            0.1f, 45.0f, 90.0f, "%.1f deg", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Dip of the magnetic field. Rays lean along it and converge where it points: 90 puts "
+            "that point at the zenith.");
+        RemixGui::DragFloat("Lower Border", &RtxAtmosphere::auroraLowerBorderKmObject(),
+                            1.0f, 10.0f, 300.0f, "%.0f km", sliderFlags);
+        RemixGui::DragFloat("Vertical Extent", &RtxAtmosphere::auroraVerticalExtentKmObject(),
+                            0.1f, 1.0f, 60.0f, "%.1f km", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Scale height of the green light above its peak for an unrayed arc. Rays reach up to "
+            "four times further.");
+        ImGui::TreePop();
+      }
+
+      if (ImGui::TreeNode("Form")) {
+        RemixGui::DragInt("Arcs", &RtxAtmosphere::auroraArcCountObject(), 0.05f, 1, 4, "%d", sliderFlags);
+        RemixGui::DragFloat("Arc Spacing", &RtxAtmosphere::auroraArcSpacingKmObject(),
+                            1.0f, 1.0f, 300.0f, "%.0f km", sliderFlags);
+        RemixGui::DragFloat("Sheet Thickness", &RtxAtmosphere::auroraSheetThicknessKmObject(),
+                            0.05f, 0.25f, 30.0f, "%.2f km", sliderFlags);
+        RemixGui::DragFloat("Boundary Wavelength Ratio", &RtxAtmosphere::auroraSheetWavelengthRatioObject(),
+                            0.1f, 2.0f, 60.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Wavelength of the sheet's rippled boundaries over twice its thickness. Observed: 5.2-31.4.");
+        RemixGui::DragFloat("Rays", &RtxAtmosphere::auroraRayStrengthObject(),
+                            0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("0 = homogeneous arc, 1 = fully rayed drapery.");
+        RemixGui::DragFloat("Folds", &RtxAtmosphere::auroraFoldStrengthObject(),
+                            0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("How far the folds and spirals wind the sheet.");
+        ImGui::TreePop();
+      }
+
+      if (ImGui::TreeNode("Spectrum & quality")) {
+        RemixGui::DragFloat("Red Top (630.0 nm)", &RtxAtmosphere::auroraRedRatioObject(),
+                            0.005f, 0.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Relative to green. A broad diffuse glow high above the curtain. 0 shortens the march.");
+        RemixGui::DragFloat("Blue Border (427.8 nm)", &RtxAtmosphere::auroraBlueRatioObject(),
+                            0.005f, 0.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Relative to green. Hugs the lower border.");
+        RemixGui::DragInt("View Samples", &RtxAtmosphere::auroraViewSamplesObject(), 0.25f, 4, 96, "%d", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "March steps per arc. Resolves folds and the height profile; thin curtains are found "
+            "at any count.");
+        ImGui::TreePop();
+      }
+
+      ImGui::EndDisabled();
+      ImGui::TreePop();
+    }
+  }
+
   void renderMoonLightQualityUI() {
     constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
 
@@ -1485,6 +1571,7 @@ void RtxAtmosphere::showNightSettings(const WeatherSnapshot* weatherSnapshot) {
 
   renderStarsUI();
   renderMilkyWayUI();
+  renderAuroraUI();
   renderMoonLightQualityUI();
   renderStarAppearanceUI();
 

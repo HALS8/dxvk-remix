@@ -23,7 +23,7 @@
 
 // Hillaire Physically-Based Atmospheric Scattering — sky-path evaluators.
 // View-direction functions composed into evalSkyRadiance: clouds, moons,
-// night sky (stars + galactic band + shooting stars + airglow), sun disk.
+// night sky (stars + galactic band + shooting stars + airglow), aurora, sun disk.
 // Closesthit and integrate paths that don't sample sky radiance keep their
 // existing atmosphere_common.slangh include only — the sky-only functions
 // here then never end up in their compiled SPIR-V.
@@ -37,6 +37,7 @@
 
 #include "rtx/pass/atmosphere/atmosphere_common.slangh"
 #include "rtx/pass/atmosphere/star_entry.h"
+#include "rtx/pass/atmosphere/atmosphere_aurora.slangh"
 
 // ============================================================================
 // Night sky — stars, galactic band, shooting stars, airglow
@@ -764,6 +765,11 @@ vec3 evalSkyRadiance(
       starThroughMoons *= (1.0f - coverage);
     }
   }
+
+  // The aurora emits from 100 km up: in front of the moon and the stars, behind
+  // every cloud. Rayed only where stars are drawn, for the same reason.
+  radiance += evalAurora(viewDirYUp, args, nightRadiometry(args),
+                         /*fineStructure=*/!applySkyIndirectRadianceScale);
 
   // Clouds render on top of everything (atmosphere + stars + moons). They
   // occlude whatever is behind them based on their alpha.

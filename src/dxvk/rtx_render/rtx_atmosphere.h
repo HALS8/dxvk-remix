@@ -770,6 +770,92 @@ public:
                "How strongly dust-lane patches darken the Milky Way glow. 0 = no dust (smooth "
                "uniform band), 1 = full dust contrast. Default 0.6.");
 
+    // ----- Aurora -----
+    // After Baranoski et al., "Simulating the aurora" (2003): sheets of precipitating electrons
+    // with sine-wave boundaries, emitting the 557.7 / 630.0 / 427.8 nm lines against height.
+    RTX_OPTION("rtx.atmosphere", bool, auroraEnabled, false,
+               "Draw an aurora in the Numos night sky. It is an emitter like the stars and airglow: it "
+               "follows the night exposure, is dimmed and reddened by the air toward the horizon, sits "
+               "behind clouds, and lights the scene through the diffuse sky gather.");
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraIntensityKR, 100.0f,
+               "Brightness of the green 557.7 nm line for a curtain crossed square-on, in kilorayleighs. "
+               "This is the International Brightness Coefficient scale: 1 kR (IBC I) is about as bright "
+               "as the Milky Way, 10 kR (II) as thin moonlit cirrus, 100 kR (III) is a bright, plainly "
+               "coloured display and 1000 kR (IV) casts shadows. A curtain seen obliquely or edge-on is "
+               "brighter than this figure, as a real one is. Game-drivable.",
+               args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraActivity, 0.5f,
+               "Where the display sits in a substorm, 0 to 1. 0 is a quiet, dim, nearly homogeneous arc; "
+               "1 is the expansion phase - bright, strongly rayed, tall, folded and fast. Scales "
+               "brightness (0.25x to 1.75x), ray motion, how far the arcs wander and how hard the folds "
+               "wind. Game-drivable.",
+               args.minValue = 0.0f, args.maxValue = 1.0f);
+    RTX_OPTION("rtx.atmosphere", float, auroraDistanceKm, 250.0f,
+               "Distance from the observer to the centre of the arc system, toward the magnetic pole. "
+               "0 puts the display overhead, where its rays converge into a corona; a few hundred "
+               "kilometres stands it up as curtains in the poleward sky; around 1000 leaves a glow on "
+               "the horizon. Negative places it on the equatorward side.");
+    RTX_OPTION("rtx.atmosphere", float, auroraBearingDegrees, 0.0f,
+               "Azimuth of the magnetic pole in degrees, in the same convention as sunRotation and "
+               "starAxisRotation (0 = North). The arcs run at right angles to it.");
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraFieldInclinationDegrees, 77.0f,
+               "Dip of the magnetic field below horizontal, in degrees. Auroral rays follow the field, "
+               "so this sets how far they lean and where they appear to converge: 90 is a vertical "
+               "field with the convergence point at the zenith, and auroral latitudes sit near 75-80.",
+               args.minValue = 45.0f, args.maxValue = 90.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", int, auroraArcCount, 3,
+               "Number of parallel arcs in the system [1, 4]. Arcs of a system move together. Cost is "
+               "per arc, though arcs a view ray never comes near are skipped.",
+               args.minValue = 1, args.maxValue = 4);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraArcSpacingKm, 60.0f,
+               "Spacing between neighbouring arcs, in kilometres. Observed systems run 10 to 100.",
+               args.minValue = 1.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraSheetThicknessKm, 4.0f,
+               "Thickness of each electron sheet, in kilometres. Observed sheets run about 1 to 10. "
+               "Thinner curtains are crisper and show sharper folds; the total light is unchanged.",
+               args.minValue = 0.25f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraSheetWavelengthRatio, 12.0f,
+               "Wavelength of the sheet's rippled boundaries as a multiple of twice its thickness. The "
+               "preferred observed range is 5.2 to 31.4; lower values give tighter bulges.",
+               args.minValue = 2.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraLowerBorderKm, 100.0f,
+               "Altitude of the display's lower border, in kilometres. Green peaks 10 km above it and "
+               "red about 130 km above it. Lower it to bring the whole display down toward the horizon "
+               "of a small world.",
+               args.minValue = 10.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraVerticalExtentKm, 8.0f,
+               "Scale height of the green light above its peak for an unrayed arc, in kilometres. 8 "
+               "gives the 20-30 km tall arcs and bands; rays stretch it up to four times as far, toward "
+               "the 70-100 km of a drapery, in proportion to auroraRayStrength.",
+               args.minValue = 1.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraRayStrength, 0.7f,
+               "How strongly the display breaks into field-aligned rays, 0 to 1. 0 is a homogeneous arc "
+               "or band; 1 is a fully rayed band or drapery. Scaled further by auroraActivity.",
+               args.minValue = 0.0f, args.maxValue = 1.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraFoldStrength, 0.6f,
+               "How far the folds (about 20 km apart) and spirals (about 50 km apart) wind the sheet, "
+               "0 to 1. Folds seen edge-on are the bright vertical streaks of a curtain.",
+               args.minValue = 0.0f, args.maxValue = 1.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraRedRatio, 0.12f,
+               "Peak brightness of the red 630.0 nm oxygen line relative to green. It is emitted high "
+               "up and by long-lived atoms that drift before they radiate, so it forms a broad diffuse "
+               "top rather than following the rays. 0 removes it and shortens the march.",
+               args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraBlueRatio, 0.25f,
+               "Peak brightness of the blue 427.8 nm nitrogen band relative to green. It hugs the lower "
+               "border and is as sharply structured as the sheet itself.",
+               args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraSpeed, 1.0f,
+               "Time scale of the aurora's motion. 1 is real time: rays run along the arc at a few "
+               "kilometres per second and the arcs drift at a few hundred metres per second.",
+               args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", int, auroraViewSamples, 32,
+               "March steps through the emitting shell, per arc, for rays that show the sky directly. "
+               "The diffuse gather uses a third. The sheet is integrated analytically across each step, "
+               "so this controls how finely folds and the height profile are resolved, not whether a "
+               "thin curtain is found.",
+               args.minValue = 4, args.maxValue = 96);
+
     RTX_OPTION("rtx.atmosphere", float, starSizeMagnitudeScale, 0.8f,
                "How much wider the brightest procedural stars are than the faintest, as a "
                "multiple of the starPsfWidthPixels core radius. A real field shows magnitude "
