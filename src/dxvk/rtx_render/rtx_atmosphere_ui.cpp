@@ -393,6 +393,11 @@ namespace {
       RemixGui::SetTooltipToLastWidgetOnHover(
           "Green-line brightness of a curtain crossed square-on. 1 kR is about the Milky Way, "
           "10 thin moonlit cirrus, 100 a bright coloured display, 1000 bright enough to cast shadows.");
+      RemixGui::DragFloat("Cast Light", &RtxAtmosphere::auroraLightScaleObject(),
+                          0.05f, 0.0f, 200.0f, "%.2fx", sliderFlags);
+      RemixGui::SetTooltipToLastWidgetOnHover(
+          "Gain on the light the aurora casts on the scene; the aurora itself looks the same. "
+          "1 is physical, about a crescent moon's worth from a bright display.");
       RemixGui::DragFloat("Activity", &RtxAtmosphere::auroraActivityObject(),
                           0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
       RemixGui::SetTooltipToLastWidgetOnHover(

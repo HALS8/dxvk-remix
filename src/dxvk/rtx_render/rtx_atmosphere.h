@@ -784,6 +784,13 @@ public:
                "coloured display and 1000 kR (IV) casts shadows. A curtain seen obliquely or edge-on is "
                "brighter than this figure, as a real one is. Game-drivable.",
                args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraLightScale, 1.0f,
+               "Gain on the light the aurora casts on the scene, leaving the aurora you see unchanged. 1 is "
+               "physical, and physically that is little: a bright display lights the ground about as well as "
+               "a crescent moon, and unlike the moon it has no direct light path, only the diffuse sky "
+               "gather. Raise this for snow and water that visibly take the aurora's colour. Reflections "
+               "stay at the visible brightness, so a very high value makes a lake dimmer than its shore.",
+               args.minValue = 0.0f);
     RTX_OPTION_ARGS("rtx.atmosphere", float, auroraActivity, 0.5f,
                "Where the display sits in a substorm, 0 to 1. 0 is a quiet, dim, nearly homogeneous arc; "
                "1 is the expansion phase - bright, strongly rayed, tall, folded and fast. Scales "

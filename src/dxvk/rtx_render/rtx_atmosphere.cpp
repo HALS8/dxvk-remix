@@ -605,6 +605,7 @@ namespace {
     args.auroraBlueRatio             = 0.0f;
     args.auroraSheetWavelengthRatio  = 0.0f;
     args.auroraViewSamples           = 0u;
+    args.auroraLightScale            = 0.0f;
   }
 
   float quantizeDirComponent(float v, float stepRad) {
@@ -1167,7 +1168,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
 
     args.auroraSheetWavelengthRatio = std::max(RtxAtmosphere::auroraSheetWavelengthRatio(), 2.0f);
     args.auroraViewSamples          = static_cast<uint32_t>(std::clamp(RtxAtmosphere::auroraViewSamples(), 4, 96));
-    args.padAurora0 = 0u;
+    args.auroraLightScale = std::max(RtxAtmosphere::auroraLightScale(), 0.0f);
     args.padAurora1 = 0u;
   }
   // The former padMilkyWay0/1/2 slots (nvdfStepScale / nvdfBodyErosionStrength
