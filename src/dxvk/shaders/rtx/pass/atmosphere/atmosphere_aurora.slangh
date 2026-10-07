@@ -73,8 +73,9 @@ static const float kAuroraRedPeakKm    = 130.0f;
 static const float kAuroraRedBelowKm   = 40.0f;
 static const float kAuroraRedAboveKm   = 70.0f;
 
-// Width of a single ray along the arc, km.
+// Width of a single ray along the arc, and of the bundles rays gather into, km.
 static const float kAuroraRayWidthKm = 1.3f;
+static const float kAuroraBundleWidthKm = 12.0f;
 
 // Steps shorter than this already resolve a fold and are not subdivided.
 static const float kAuroraRefineStepKm = 2.0f;
@@ -89,7 +90,8 @@ float auroraHash(float n, float seed) {
 float auroraNoise1D(float x, float seed) {
   const float i = floor(x);
   float f = x - i;
-  f = f * f * (3.0f - 2.0f * f);
+  // Quintic: the ray silhouettes are this curve, and a kink in its slope shows.
+  f = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
   return mix(auroraHash(i, seed), auroraHash(i + 1.0f, seed), f);
 }
 
@@ -209,15 +211,17 @@ vec2 auroraFootprint(vec3 dir, float t, float altitude, AuroraFrame frame, Atmos
                 + (altitude - args.auroraLowerBorderKm) * args.auroraFieldTanTilt);
 }
 
-AuroraSheetSample auroraSampleSheet(vec3 dir, float t, float base, float seed,
+AuroraSheetSample auroraSampleSheet(vec3 dir, float t, float base, float seed, bool wound,
                                     AuroraFrame frame, AtmosphereArgs args) {
   AuroraSheetSample s;
   s.altitude = auroraAltitude(t, dir.y, frame.eyeRadius);
 
   vec2 q = auroraFootprint(dir, t, s.altitude, frame, args);
-  const float winding = args.auroraFoldStrength * (0.4f + 1.2f * frame.activity);
-  q = auroraDistort(q, 55.0f, 0.4f, 1.6f * winding, base, seed, frame.time, frame.activity);
-  q = auroraDistort(q, 21.0f, 1.8f, 2.6f * winding, base, seed, frame.time, frame.activity);
+  if (wound) {
+    const float winding = args.auroraFoldStrength * (0.4f + 1.2f * frame.activity);
+    q = auroraDistort(q, 55.0f, 0.4f, 1.6f * winding, base, seed, frame.time, frame.activity);
+    q = auroraDistort(q, 21.0f, 1.8f, 2.6f * winding, base, seed, frame.time, frame.activity);
+  }
 
   const float thickness = args.auroraSheetThicknessKm;
   const float wavelength = 2.0f * thickness * args.auroraSheetWavelengthRatio;
@@ -245,9 +249,9 @@ float auroraNearestApproach(AuroraSheetSample a, AuroraSheetSample b) {
 }
 
 // Radiance of the aurora along a view direction in the atmosphere's Y-up frame,
-// in frame units. `fineStructure` selects the full march with rays; without it
-// the display is integrated coarsely and unrayed, which is all a diffuse gather
-// can resolve.
+// in frame units. `fineStructure` selects the full march with folds and rays;
+// without it the display is integrated coarsely, unwound and unrayed, which is
+// all a diffuse gather can resolve.
 vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad, bool fineStructure) {
   if (args.auroraIntensityKR <= 0.0f || rad.adaptation <= 0.0f || dir.y <= 0.0f) {
     return vec3(0.0f);
@@ -270,34 +274,58 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad, bool fineStr
   const float tNear = auroraShellDistance(max(lowerBorder - 2.0f, 1.0f), dir.y, frame.eyeRadius);
   const float tFar = auroraShellDistance(top, dir.y, frame.eyeRadius);
 
-  const uint steps = fineStructure ? max(args.auroraViewSamples, 4u)
-                                   : max(args.auroraViewSamples / 3u, 4u);
+  const uint maxSteps = fineStructure ? max(args.auroraViewSamples, 6u)
+                                      : max(args.auroraViewSamples / 4u, 4u);
   const uint arcCount = min(args.auroraArcCount, AURORA_MAX_ARCS);
 
-  // Across-arc span the ray's footprint sweeps, to reject arcs it never nears.
+  // The footprint's across-arc coordinate runs almost linearly along the ray,
+  // and the sheet never strays further than this from its arc's base line, so
+  // each arc can only be met inside one short stretch of the shell. Marching
+  // that stretch alone is most of the cost saved and all of the steps spent
+  // where the curtain is.
   const float acrossNear = auroraFootprint(dir, tNear, lowerBorder, frame, args).y;
   const float acrossFar = auroraFootprint(dir, tFar, top, frame, args).y;
-  const float kArcReach = 120.0f;
+  const float acrossRate = (acrossFar - acrossNear) / max(tFar - tNear, 1e-3f);
+  const float widestSigma = 1.6f * args.auroraSheetThicknessKm * (1.0f / 2.355f);
+  const float glowReach = 3.0f * (args.auroraRedRatio > 0.0f ? 3.0f * widestSigma + 4.0f : 1.15f * widestSigma);
+  const float kWindingAndCurvatureKm = 25.0f;
+  const float reach = 45.0f * (0.5f + frame.activity) + args.auroraSheetThicknessKm
+                    + glowReach + kWindingAndCurvatureKm;
 
   vec3 total = vec3(0.0f);
   for (uint k = 0u; k < arcCount; ++k) {
     const float seed = float(k) * 3.0f + 1.0f;
     const float base = args.auroraDistanceKm
                      + (float(k) - 0.5f * float(arcCount - 1u)) * args.auroraArcSpacingKm;
-    if (base < min(acrossNear, acrossFar) - kArcReach || base > max(acrossNear, acrossFar) + kArcReach) {
+
+    float tBegin = tNear;
+    float tEnd = tFar;
+    if (abs(acrossRate) * (tFar - tNear) > 1.0f) {
+      const float tA = tNear + (base - reach - acrossNear) / acrossRate;
+      const float tB = tNear + (base + reach - acrossNear) / acrossRate;
+      tBegin = max(tNear, min(tA, tB));
+      tEnd = min(tFar, max(tA, tB));
+    } else if (abs(acrossNear - base) > reach) {
       continue;
     }
+    if (tEnd <= tBegin) {
+      continue;
+    }
+
+    const uint steps = clamp(uint(ceil(2.0f * float(maxSteps) * (tEnd - tBegin) / (tFar - tNear))),
+                             min(6u, maxSteps), maxSteps);
+    // From the bottom of the shell the steps crowd toward the lower border,
+    // where the height profile is sharp; elsewhere the crossing is found exactly.
+    const float spacingPower = tBegin == tNear ? 2.0f : 1.0f;
 
     const float arcBrightness = 0.45f + 0.55f * auroraHash(float(k), 19.0f);
 
     vec3 arc = vec3(0.0f);
-    float tPrev = tNear;
-    AuroraSheetSample prev = auroraSampleSheet(dir, tNear, base, seed, frame, args);
+    float tPrev = tBegin;
+    AuroraSheetSample prev = auroraSampleSheet(dir, tBegin, base, seed, fineStructure, frame, args);
     for (uint i = 1u; i <= steps; ++i) {
-      // Quadratic spacing: the lower border is where the profile is sharp.
-      const float x = float(i) / float(steps);
-      const float t = tNear + (tFar - tNear) * x * x;
-      const AuroraSheetSample cur = auroraSampleSheet(dir, t, base, seed, frame, args);
+      const float t = mix(tBegin, tEnd, pow(float(i) / float(steps), spacingPower));
+      const AuroraSheetSample cur = auroraSampleSheet(dir, t, base, seed, fineStructure, frame, args);
 
       const float sigma = 0.5f * (prev.sigma + cur.sigma);
       const float sigmaGreen = 1.15f * sigma;
@@ -306,7 +334,7 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad, bool fineStr
 
       const float clearance = min(abs(prev.offset), abs(cur.offset));
 
-      if (crosses || clearance < 4.0f * sigmaRed) {
+      if (crosses || clearance < 3.0f * sigmaRed) {
         const vec3 sigmas = vec3(sigma, sigmaGreen, sigmaRed);
         AuroraSheetSample low = prev;
         AuroraSheetSample high = cur;
@@ -314,29 +342,22 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad, bool fineStr
         float tHigh = t;
         vec3 crossSection = vec3(0.0f);
 
-        // A fold bends the sheet within a step, so a step long enough to hold
-        // one is closed in on the sheet and the pieces integrated separately.
-        // The ends of a whole step misplace the crossing by an amount that
-        // slides with the step phase, which shows as a ripple along every ray.
+        // A fold bends the sheet within a step, so a step that crosses it is
+        // closed in on the crossing and the pieces integrated separately. The
+        // ends of a whole step misplace the crossing by an amount that slides
+        // with the step phase, which shows as a ripple along every ray.
         //
         // False position with the Illinois correction: halving the estimate at
         // an end that is kept twice running is what makes both ends close in.
-        // A step that only passes near the sheet is bisected toward it instead.
-        if ((crosses || clearance < 4.0f * sigmaGreen) && t - tPrev > kAuroraRefineStepKm) {
+        if (fineStructure && crosses && t - tPrev > kAuroraRefineStepKm) {
           float estimateLow = low.offset;
           float estimateHigh = high.offset;
           int kept = 0;
           for (uint refine = 0u; refine < 3u; ++refine) {
-            const bool bracketed = low.offset * high.offset < 0.0f;
-            const float where = bracketed
-                              ? clamp(estimateLow / (estimateLow - estimateHigh), 0.02f, 0.98f)
-                              : 0.5f;
-            const float tMid = mix(tLow, tHigh, where);
-            const AuroraSheetSample mid = auroraSampleSheet(dir, tMid, base, seed, frame, args);
+            const float tMid = mix(tLow, tHigh, clamp(estimateLow / (estimateLow - estimateHigh), 0.02f, 0.98f));
+            const AuroraSheetSample mid = auroraSampleSheet(dir, tMid, base, seed, fineStructure, frame, args);
 
-            const bool sheetInLow = mid.offset * low.offset < 0.0f
-                                 || (mid.offset * high.offset >= 0.0f && abs(low.offset) < abs(high.offset));
-            if (sheetInLow) {
+            if (mid.offset * low.offset < 0.0f) {
               crossSection += auroraCrossSections(mid.offset, high.offset, sigmas) * (tHigh - tMid);
               tHigh = tMid;
               high = mid;
@@ -361,21 +382,29 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad, bool fineStr
         const float along = mix(low.along, high.along, where);
         const float distance = mix(tLow, tHigh, where);
 
-        float rays = 0.5f;
+        // Rays gather into bundles. A bundle sets how tall the curtain stands
+        // and how bright it is; the rays inside it only streak its brightness.
+        // Letting single rays set the height draws each one as a wedge.
+        float bundle = 0.5f;
+        float streak = 0.5f;
         if (fineStructure) {
+          const float b = along / kAuroraBundleWidthKm - frame.time * (0.02f + 0.06f * frame.activity);
+          bundle = smoothstep(0.2f, 0.8f, 0.6f * auroraNoise1D(b, seed) + 0.4f * auroraNoise1D(b * 0.31f + 40.0f, seed + 1.0f));
+
           // Single rays are about a kilometre across and a far curtain puts
-          // several under one pixel, so they fade to their mean as they shrink
-          // and leave the ten-kilometre bundles, which never do.
+          // several under one pixel, so they fade to their mean as they shrink.
           const float pixelKm = distance * args.pixelAngleRad;
-          const float resolved = saturate(1.5f - 2.0f * pixelKm / kAuroraRayWidthKm);
+          const float kStrandsPerRay = 0.37f;
+          const float resolvedRay = saturate(1.5f - 2.0f * pixelKm / kAuroraRayWidthKm);
+          const float resolvedStrand = saturate(1.5f - 2.0f * pixelKm * kStrandsPerRay / kAuroraRayWidthKm);
           const float r = along / kAuroraRayWidthKm - frame.time * (1.5f + 4.0f * frame.activity);
-          rays = smoothstep(0.25f, 0.75f, 0.5f * mix(0.5f, auroraNoise1D(r, seed), resolved)
-                                        + 0.5f * auroraNoise1D(r * 0.13f + 40.0f, seed + 1.0f));
+          streak = 0.6f * mix(0.5f, auroraNoise1D(r * kStrandsPerRay + 11.0f, seed + 3.0f), resolvedStrand)
+                 + 0.4f * mix(0.5f, auroraNoise1D(r, seed + 4.0f), resolvedRay);
         }
-        const float rayGain = mix(1.0f, 0.2f + 1.6f * rays, args.auroraRayStrength);
+        const float rayGain = mix(1.0f, (0.35f + 1.3f * bundle) * (0.6f + 0.8f * streak), args.auroraRayStrength);
         const float surge = 0.35f + 1.3f * auroraNoise1D(along * (1.0f / 90.0f) - frame.time * 0.02f, seed + 2.0f);
 
-        const float extent = args.auroraVerticalExtentKm * (1.0f + 3.0f * args.auroraRayStrength * rays);
+        const float extent = args.auroraVerticalExtentKm * (1.0f + 3.0f * args.auroraRayStrength * bundle);
         const float green = auroraHeightProfile(altitude, lowerBorder + kAuroraGreenPeakKm,
                                                 kAuroraGreenBelowKm, extent);
         const float blue = auroraHeightProfile(altitude, lowerBorder + kAuroraBluePeakKm,

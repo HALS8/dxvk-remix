@@ -835,9 +835,10 @@ public:
                "gives the 20-30 km tall arcs and bands; rays stretch it up to four times as far, toward "
                "the 70-100 km of a drapery, in proportion to auroraRayStrength.",
                args.minValue = 1.0f);
-    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraRayStrength, 0.7f,
+    RTX_OPTION_ARGS("rtx.atmosphere", float, auroraRayStrength, 0.4f,
                "How strongly the display breaks into field-aligned rays, 0 to 1. 0 is a homogeneous arc "
-               "or band; 1 is a fully rayed band or drapery. Scaled further by auroraActivity.",
+               "or band; 1 is a fully rayed band or drapery. Rays gather into bundles about 12 km wide, "
+               "which stand taller and brighter than the curtain between them.",
                args.minValue = 0.0f, args.maxValue = 1.0f);
     RTX_OPTION_ARGS("rtx.atmosphere", float, auroraFoldStrength, 0.6f,
                "How far the folds (about 20 km apart) and spirals (about 50 km apart) wind the sheet, "
@@ -858,7 +859,7 @@ public:
                args.minValue = 0.0f);
     RTX_OPTION_ARGS("rtx.atmosphere", int, auroraViewSamples, 32,
                "March steps through the emitting shell, per arc, for rays that show the sky directly. "
-               "The diffuse gather uses a third. The sheet is integrated analytically across each step, "
+               "The diffuse gather uses a quarter. The sheet is integrated analytically across each step, "
                "so this controls how finely folds and the height profile are resolved, not whether a "
                "thin curtain is found.",
                args.minValue = 4, args.maxValue = 96);
