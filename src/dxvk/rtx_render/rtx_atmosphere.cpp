@@ -4721,14 +4721,25 @@ void RtxAtmosphere::syncDistantLights(LightManager& lm, const AtmosphereArgs& ar
     Vector3 dirYUp(0.0f, 1.0f, 0.0f);
     const float lightScale = std::max(RtxAtmosphere::auroraLightScale(), 0.0f);
     const bool lit = lightScale > 0.0f && fhAuroraIrradianceFrame(args, nightGain, irradiance, dirYUp);
+
+    // The cloud-shadow flag reads a grid integrated along the sun's direction,
+    // which says nothing about a source spread across the poleward sky. The
+    // deck's mean coverage is the share of that sky it closes off.
+    const float openSky = args.cloudEnabled >= 0.5f ? 1.0f - std::clamp(args.cloudCoverageMean, 0.0f, 1.0f) : 1.0f;
+    const Vector3 radiance = lit ? irradiance * (openSky * lightScale * radScale / kFhPi) : Vector3(0.0f, 0.0f, 0.0f);
+
+    m_auroraLightState.lit = lit;
+    m_auroraLightState.dirYUp = dirYUp;
+    m_auroraLightState.radiance = radiance;
+    m_auroraLightState.openSky = openSky;
+
     if (lit || m_auroraLight != nullptr) {
-      const Vector3 radiance = lit ? irradiance * (lightScale * radScale / kFhPi) : Vector3(0.0f, 0.0f, 0.0f);
       const Vector3 toAurora = toWorld(dirYUp);
       // An arc spans most of the sky along its length; a wide cone gives the
       // soft, nearly shadowless light that implies.
       constexpr float kAuroraHalfAngle = 30.0f * (kFhPi / 180.0f);
       ensureLight(m_auroraLight, Vector3(-toAurora.x, -toAurora.y, -toAurora.z), kAuroraHalfAngle, radiance,
-                  /*cloudShadowed=*/true);
+                  /*cloudShadowed=*/false);
     }
   }
 

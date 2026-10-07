@@ -401,7 +401,7 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad) {
       // ray may graze the sheet or cross it three times, and which of those the
       // step's two ends happen to see changes with the step phase, breaking
       // every ray edge into rungs. There the step is cut to the fold's scale.
-      const float foldReach = kAuroraFoldReachKm + 2.3f * max(prev.sigma, cur.sigma);
+      const float foldReach = kAuroraFoldReachKm + max(prev.sigma, cur.sigma);
       const bool nearSheet = prev.offset * cur.offset < 0.0f
                           || min(abs(prev.offset), abs(cur.offset)) < foldReach;
       const uint pieces = nearSheet

@@ -380,7 +380,7 @@ namespace {
     }
   }
 
-  void renderAuroraUI() {
+  void renderAuroraUI(bool lightLit, const Vector3& lightDirYUp, const Vector3& lightRadiance, float openSky) {
     constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
     if (ImGui::TreeNode("Aurora")) {
       RemixGui::Checkbox("Enabled##aurora", &RtxAtmosphere::auroraEnabledObject());
@@ -399,6 +399,15 @@ namespace {
           "Gain on the light the aurora casts on the scene, through a distant light of its own; "
           "the aurora itself looks the same. 1 is physical, about a crescent moon's worth from a "
           "bright display.");
+      if (lightLit) {
+        const float elevationDeg = std::asin(std::clamp(lightDirYUp.y, -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+        const float azimuthDeg = std::atan2(lightDirYUp.x, lightDirYUp.z) * (180.0f / 3.14159265f);
+        ImGui::Text("Light from      %5.1f deg up, bearing %6.1f deg", elevationDeg, azimuthDeg);
+        ImGui::Text("Light radiance  %.3g  %.3g  %.3g", lightRadiance.x, lightRadiance.y, lightRadiance.z);
+        ImGui::Text("Open sky        %3.0f %%", openSky * 100.0f);
+      } else {
+        ImGui::TextUnformatted("Light           off (no arc above the horizon, or Cast Light is 0)");
+      }
       RemixGui::DragFloat("Activity", &RtxAtmosphere::auroraActivityObject(),
                           0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
       RemixGui::SetTooltipToLastWidgetOnHover(
@@ -1577,7 +1586,7 @@ void RtxAtmosphere::showNightSettings(const WeatherSnapshot* weatherSnapshot) {
 
   renderStarsUI();
   renderMilkyWayUI();
-  renderAuroraUI();
+  renderAuroraUI(m_auroraLightState.lit, m_auroraLightState.dirYUp, m_auroraLightState.radiance, m_auroraLightState.openSky);
   renderMoonLightQualityUI();
   renderStarAppearanceUI();
 
