@@ -892,7 +892,7 @@ struct AtmosphereArgs {
 
   float auroraSheetWavelengthRatio; // Boundary wavelength over twice the thickness (the paper's lambda / 2w)
   uint  auroraViewSamples;          // March steps through the emitting shell, per arc
-  float auroraLightScale;           // Gain on the aurora as seen by the diffuse sky gather only
+  uint  padAurora0;
   uint  padAurora1;
 
 };

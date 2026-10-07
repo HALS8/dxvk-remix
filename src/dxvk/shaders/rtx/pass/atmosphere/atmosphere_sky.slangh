@@ -767,10 +767,11 @@ vec3 evalSkyRadiance(
   }
 
   // The aurora emits from 100 km up: in front of the moon and the stars, behind
-  // every cloud. Rayed only where stars are drawn, for the same reason.
-  radiance += evalAurora(viewDirYUp, args, nightRadiometry(args),
-                         /*fineStructure=*/!applySkyIndirectRadianceScale)
-            * (applySkyIndirectRadianceScale ? args.auroraLightScale : 1.0f);
+  // every cloud. The diffuse gather does not see it: the light it casts arrives
+  // through its distant light, which a gather would count a second time.
+  if (!applySkyIndirectRadianceScale) {
+    radiance += evalAurora(viewDirYUp, args, nightRadiometry(args));
+  }
 
   // Clouds render on top of everything (atmosphere + stars + moons). They
   // occlude whatever is behind them based on their alpha.

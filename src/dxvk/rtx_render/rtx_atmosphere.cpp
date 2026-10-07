@@ -76,6 +76,7 @@
 #include <rtx_shaders/cloud_detail_noise_baker.h>
 #include <rtx_shaders/cloud_detail_noise_mip.h>
 #include "rtx/pass/atmosphere/cloud_nvdf.h"
+#include "rtx/pass/atmosphere/aurora_model.h"
 #include "../../util/util_once.h"  // ONCE() — one-shot warn when the scene TLAS is unavailable
 
 // The shaders compile with scalar layout and pad nothing, so a struct that is not whole 16-byte
@@ -605,7 +606,6 @@ namespace {
     args.auroraBlueRatio             = 0.0f;
     args.auroraSheetWavelengthRatio  = 0.0f;
     args.auroraViewSamples           = 0u;
-    args.auroraLightScale            = 0.0f;
   }
 
   float quantizeDirComponent(float v, float stepRad) {
@@ -1168,7 +1168,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
 
     args.auroraSheetWavelengthRatio = std::max(RtxAtmosphere::auroraSheetWavelengthRatio(), 2.0f);
     args.auroraViewSamples          = static_cast<uint32_t>(std::clamp(RtxAtmosphere::auroraViewSamples(), 4, 96));
-    args.auroraLightScale = std::max(RtxAtmosphere::auroraLightScale(), 0.0f);
+    args.padAurora0 = 0u;
     args.padAurora1 = 0u;
   }
   // The former padMilkyWay0/1/2 slots (nvdfStepScale / nvdfBodyErosionStrength
@@ -4295,6 +4295,73 @@ namespace {
     const float solidAngle = 2.0f * kFhPi * (1.0f - std::cos(m.angularRadius));
     return lFull * (fhMoonPhaseIllumination(m.phase) * solidAngle * nightGain);
   }
+  // Net irradiance the aurora delivers, in frame units, and the direction it
+  // arrives from in the atmosphere's Y-up frame. Returns false when no arc
+  // stands above the horizon.
+  //
+  // Each arc is taken as a straight, vertical, optically thin sheet, for which
+  // the flux at the observer has a closed form: a line of height-integrated
+  // brightness B at slant distance r delivers 2B / r, arriving from the line's
+  // nearest point. Rays, folds and surges average out of that; what is left
+  // agrees with a hemisphere integral of the shader's own model to within
+  // about 10% from overhead out to 500 km, and is 25% low at 1000 km.
+  bool fhAuroraIrradianceFrame(const AtmosphereArgs& a, float nightGain, Vector3& irradiance, Vector3& dirYUp) {
+    if (a.auroraIntensityKR <= 0.0f) {
+      return false;
+    }
+
+    // Integral of the Chapman profile: 1 scale height below the peak, e - 1 above.
+    constexpr float kChapmanAbove = 1.7182818f;
+    const float extent = a.auroraVerticalExtentKm * (1.0f + 0.5f * AURORA_RAY_EXTENT_GAIN * a.auroraRayStrength);
+    struct Line { vec3 perKR; float ratio; float peakKm; float columnKm; };
+    const Line lines[] = {
+      { AURORA_GREEN_PER_KR, 1.0f, AURORA_GREEN_PEAK_KM, AURORA_GREEN_BELOW_KM + kChapmanAbove * extent },
+      { AURORA_BLUE_PER_KR, a.auroraBlueRatio, AURORA_BLUE_PEAK_KM, AURORA_BLUE_BELOW_KM + kChapmanAbove * AURORA_BLUE_EXTENT * extent },
+      { AURORA_RED_PER_KR, a.auroraRedRatio, AURORA_RED_PEAK_KM, AURORA_RED_BELOW_KM + kChapmanAbove * AURORA_RED_ABOVE_KM },
+    };
+
+    const float eyeRadius = a.planetRadius + a.cameraAltitudeKm;
+    const uint32_t arcCount = std::min(a.auroraArcCount, AURORA_MAX_ARCS);
+    Vector3 sum(0.0f, 0.0f, 0.0f);
+    float weight = 0.0f;
+    float poleward = 0.0f;
+    float upward = 0.0f;
+    for (uint32_t k = 0; k < arcCount; ++k) {
+      const float distance = a.auroraDistanceKm + (float(k) - 0.5f * float(arcCount - 1)) * a.auroraArcSpacingKm;
+      for (const Line& line : lines) {
+        // The line's centroid, dropped by the planet's curvature at that distance.
+        const float flatHeight = a.auroraLowerBorderKm + line.peakKm + 0.5f * line.columnKm;
+        const float height = flatHeight - distance * distance / (2.0f * eyeRadius);
+        if (height <= 0.0f || line.ratio <= 0.0f) {
+          continue;
+        }
+        const float slant = std::sqrt(distance * distance + height * height);
+        // The arc is cut off where it sinks below the horizon.
+        const float halfLength = std::sqrt(std::max(2.0f * eyeRadius * flatHeight - distance * distance, 0.0f));
+        const float visible = halfLength / std::sqrt(slant * slant + halfLength * halfLength);
+
+        const float flux = line.ratio * AURORA_ARC_BRIGHTNESS(k) * line.columnKm * 2.0f * visible / slant;
+        const float luminance = flux * (0.2126f * line.perKR.x + 0.7152f * line.perKR.y + 0.0722f * line.perKR.z);
+        sum += Vector3(line.perKR.x, line.perKR.y, line.perKR.z) * flux;
+        weight += luminance;
+        poleward += luminance * distance / slant;
+        upward += luminance * height / slant;
+      }
+    }
+
+    const float net = std::sqrt(poleward * poleward + upward * upward);
+    if (weight <= 0.0f || net <= 0.0f) {
+      return false;
+    }
+    dirYUp = Vector3(a.auroraPolewardXZ.x * poleward, upward, a.auroraPolewardXZ.y * poleward) * (1.0f / net);
+
+    const float sunFrame = std::max(0.2126f * a.sunIlluminance.x + 0.7152f * a.sunIlluminance.y + 0.0722f * a.sunIlluminance.z, 1e-6f);
+    constexpr float kSunIlluminanceLux = 128000.0f;
+    // Arcs either side of the observer partly cancel: net / weight is that loss.
+    irradiance = fhMul(sum, fhAtmTransmittanceYUp(a, dirYUp))
+               * ((net / weight) * a.auroraIntensityKR * (sunFrame / kSunIlluminanceLux) * nightGain);
+    return true;
+  }
 }  // anonymous namespace
 
 void RtxAtmosphere::dropDistantLights() {
@@ -4311,6 +4378,10 @@ void RtxAtmosphere::dropDistantLights() {
   if (m_lightningLight) {
     m_lightningLight->markForGarbageCollection();
     m_lightningLight = nullptr;
+  }
+  if (m_auroraLight) {
+    m_auroraLight->markForGarbageCollection();
+    m_auroraLight = nullptr;
   }
 }
 
@@ -4642,6 +4713,23 @@ void RtxAtmosphere::syncDistantLights(LightManager& lm, const AtmosphereArgs& ar
     // lookup, and off is the old behaviour for anyone who tuned against it.
     ensureLight(m_moonLights[i], propDir, moonHalfAngle, radiance,
                 /*cloudShadowed=*/RtxAtmosphere::moonCloudShadowed());
+  }
+
+  // ---- Aurora: an extended emitter stood in for by one wide distant light ----
+  {
+    Vector3 irradiance(0.0f, 0.0f, 0.0f);
+    Vector3 dirYUp(0.0f, 1.0f, 0.0f);
+    const float lightScale = std::max(RtxAtmosphere::auroraLightScale(), 0.0f);
+    const bool lit = lightScale > 0.0f && fhAuroraIrradianceFrame(args, nightGain, irradiance, dirYUp);
+    if (lit || m_auroraLight != nullptr) {
+      const Vector3 radiance = lit ? irradiance * (lightScale * radScale / kFhPi) : Vector3(0.0f, 0.0f, 0.0f);
+      const Vector3 toAurora = toWorld(dirYUp);
+      // An arc spans most of the sky along its length; a wide cone gives the
+      // soft, nearly shadowless light that implies.
+      constexpr float kAuroraHalfAngle = 30.0f * (kFhPi / 180.0f);
+      ensureLight(m_auroraLight, Vector3(-toAurora.x, -toAurora.y, -toAurora.z), kAuroraHalfAngle, radiance,
+                  /*cloudShadowed=*/true);
+    }
   }
 
   // ---- Lightning scene flash (fork — 2026-07-14, tier 2) ----

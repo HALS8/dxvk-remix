@@ -396,8 +396,9 @@ namespace {
       RemixGui::DragFloat("Cast Light", &RtxAtmosphere::auroraLightScaleObject(),
                           0.05f, 0.0f, 200.0f, "%.2fx", sliderFlags);
       RemixGui::SetTooltipToLastWidgetOnHover(
-          "Gain on the light the aurora casts on the scene; the aurora itself looks the same. "
-          "1 is physical, about a crescent moon's worth from a bright display.");
+          "Gain on the light the aurora casts on the scene, through a distant light of its own; "
+          "the aurora itself looks the same. 1 is physical, about a crescent moon's worth from a "
+          "bright display.");
       RemixGui::DragFloat("Activity", &RtxAtmosphere::auroraActivityObject(),
                           0.005f, 0.0f, 1.0f, "%.2f", sliderFlags);
       RemixGui::SetTooltipToLastWidgetOnHover(
