@@ -64,6 +64,11 @@ static const float kAuroraFoldReachKm = 8.0f;
 static const uint kAuroraMaxPieces = 8u;
 static const float kAuroraRefineStepKm = 2.0f;
 
+// How many widths out a line's glow is followed. The cut is a hard one that
+// lands on step boundaries, so it has to fall where nothing is left to see:
+// 0.03% at four, against a visibly serrated 1% at three.
+static const float kAuroraGlowSigmas = 4.0f;
+
 // Phase shift between the sheet's two boundaries; the paper's upper bound.
 static const float kAuroraBoundaryPhase = 0.35f * 3.14159265f;
 
@@ -242,7 +247,7 @@ vec3 auroraSegment(vec3 dir, AuroraSheetSample prev, AuroraSheetSample cur, floa
 
   const float clearance = min(abs(prev.offset), abs(cur.offset));
 
-  if (crosses || clearance < 3.0f * sigmaRed) {
+  if (crosses || clearance < kAuroraGlowSigmas * sigmaRed) {
     const vec3 sigmas = vec3(sigma, sigmaGreen, sigmaRed);
     AuroraSheetSample low = prev;
     AuroraSheetSample high = cur;
@@ -359,7 +364,7 @@ vec3 evalAurora(vec3 dir, AtmosphereArgs args, NightRadiometry rad) {
   const float acrossFar = auroraFootprint(dir, tFar, top, frame, args).y;
   const float acrossRate = (acrossFar - acrossNear) / max(tFar - tNear, 1e-3f);
   const float widestSigma = 1.6f * args.auroraSheetThicknessKm * (1.0f / 2.355f);
-  const float glowReach = 3.0f * (args.auroraRedRatio > 0.0f ? 3.0f * widestSigma + 4.0f : 1.15f * widestSigma);
+  const float glowReach = kAuroraGlowSigmas * (args.auroraRedRatio > 0.0f ? 3.0f * widestSigma + 4.0f : 1.15f * widestSigma);
   const float kWindingAndCurvatureKm = 25.0f;
   const float reach = 45.0f * (0.5f + frame.activity) + args.auroraSheetThicknessKm
                     + glowReach + kWindingAndCurvatureKm;
