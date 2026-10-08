@@ -33,6 +33,7 @@ namespace dxvk {
 
   D3D9Rtx::D3D9Rtx(D3D9DeviceEx* d3d9Device, bool enableDrawCallConversion)
     : m_rtStagingData(d3d9Device->GetDXVKDevice(), "RtxStagingDataAlloc: D3D9", (VkMemoryPropertyFlagBits) (VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+    , m_rtMemoizedIndexData(d3d9Device->GetDXVKDevice(), "RtxStagingDataAlloc: D3D9 memoized indices", (VkMemoryPropertyFlagBits) (VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
     , m_parent(d3d9Device)
     , m_enableDrawCallConversion(enableDrawCallConversion)
     , m_pGeometryWorkers(enableDrawCallConversion ? std::make_unique<GeometryProcessor>(numGeometryProcessingThreads(), "geometry-processing") : nullptr) {
@@ -120,11 +121,11 @@ namespace dxvk {
     const size_t numIndexBytes = indexCount * indexStride;
     const size_t indexOffset = indexStride * startIndex;
 
-    auto processing = [this, &indexCtx, indexCount](const size_t offset, const size_t size) -> D3D9CommonBuffer::RemixIndexBufferMemoizationData {
+    auto processing = [&indexCtx, indexCount](RtxStagingDataAlloc& stagingData, const size_t offset, const size_t size) -> D3D9CommonBuffer::RemixIndexBufferMemoizationData {
       D3D9CommonBuffer::RemixIndexBufferMemoizationData result;
 
       // Get our slice of the staging ring buffer
-      result.slice = m_rtStagingData.alloc(CACHE_LINE_SIZE, size);
+      result.slice = stagingData.alloc(CACHE_LINE_SIZE, size);
 
       // Acquire prevents the staging allocator from re-using this memory
       result.slice.buffer()->acquire(DxvkAccess::Read);
@@ -141,14 +142,18 @@ namespace dxvk {
     if (enableIndexBufferMemoization() && indexCtx.ibo != nullptr) {
       // If we have an index buffer, we can utilize memoization
       D3D9CommonBuffer::RemixIboMemoizer& memoization = indexCtx.ibo->remixMemoization;
-      const auto result = memoization.memoize(indexOffset, numIndexBytes, processing);
+      // A memoized slice lives as long as the game's index buffer does, and keeps the whole
+      // staging buffer it was cut from alive with it. Cut from the per-draw ring, a few
+      // kilobytes of indices would hold 32 MiB of spent vertex copies for every mesh seen.
+      const auto result = memoization.memoize(indexOffset, numIndexBytes,
+        [this, &processing](const size_t offset, const size_t size) { return processing(m_rtMemoizedIndexData, offset, size); });
       minIndex = result.min;
       maxIndex = result.max;
       return result.slice;
     }
 
     // No index buffer (so no memoization) - this could be a DrawPrimitiveUP call (where IB data is passed inline)
-    const auto result = processing(indexOffset, numIndexBytes);
+    const auto result = processing(m_rtStagingData, indexOffset, numIndexBytes);
     minIndex = result.min;
     maxIndex = result.max;
     return result.slice;

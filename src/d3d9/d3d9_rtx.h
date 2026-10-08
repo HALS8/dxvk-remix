@@ -299,6 +299,8 @@ namespace dxvk {
     DrawCallState m_activeDrawCallState;
 
     RtxStagingDataAlloc m_rtStagingData;
+    // Index data kept by D3D9CommonBuffer::remixMemoization, apart from the per-draw copies above.
+    RtxStagingDataAlloc m_rtMemoizedIndexData;
     D3D9DeviceEx* m_parent;
 
     std::optional<D3DPRESENT_PARAMETERS> m_activePresentParams;
