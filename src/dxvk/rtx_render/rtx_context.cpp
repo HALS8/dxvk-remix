@@ -916,8 +916,6 @@ namespace dxvk {
     clearResourceAliasingCache();
 #endif
 
-    fork_hooks::autoPbrEndFrame(*this);
-
     // Update time on the frame end so all other systems can benefit from a global time
     GlobalTime::get().update();
   }
