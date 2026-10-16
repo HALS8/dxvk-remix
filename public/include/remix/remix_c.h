@@ -74,9 +74,12 @@
 // PATCH 3 reduces remixapi_MaterialInfoGameTexturesEXT to that single texture
 // and removes the AutoPBR surface (SetDrawGameTextures interface slot, texture
 // usages and names).
+//
+// PATCH 4 added remixapi_InstanceInfoAlbedoTintEXT (a per-instance albedo tint
+// masked by the albedo texture's alpha).
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 1000
-#define REMIXAPI_VERSION_PATCH 3
+#define REMIXAPI_VERSION_PATCH 4
 
 
 // External
@@ -152,6 +155,7 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT     = 27,
     REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO                   = 28,
     REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_GAME_TEXTURES_EXT      = 29,
+    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT        = 30,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -492,6 +496,19 @@ extern "C" {
     // A value to write for 'RequestObjectPicking'
     uint32_t                       objectPickingValue;
   } remixapi_InstanceInfoObjectPickingEXT;
+
+  // Tints the instance's albedo where its albedo texture's alpha is below one:
+  //   albedo.rgb *= lerp(tint.rgb, 1, albedo.a)
+  // The alpha is then a tint mask, not coverage, so it does not set the opacity. This is the
+  // shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR, for an API
+  // instance, so one material can be drawn in several tints (a game's dyed cloth). The tint is
+  // gamma encoded like the texture's colour. Without the extension the albedo is not tinted.
+  typedef struct remixapi_InstanceInfoAlbedoTintEXT {
+    remixapi_StructType            sType;
+    void*                          pNext;
+    // 0xAARRGGBB, as D3DCOLOR; alpha is ignored
+    uint32_t                       tint;
+  } remixapi_InstanceInfoAlbedoTintEXT;
 
   // Bit values match upstream NVIDIA dxvk-remix exactly. These are a published
   // ABI contract — do NOT reorder or reassign. (An earlier fork build shifted

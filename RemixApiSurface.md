@@ -26,7 +26,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_VERSION_GET_PATCH(version)` | `(((uint64_t)(version)      ) & (uint64_t)0xFFFF)` |
 | `REMIXAPI_VERSION_MAJOR` | `0` |
 | `REMIXAPI_VERSION_MINOR` | `1000` |
-| `REMIXAPI_VERSION_PATCH` | `3` |
+| `REMIXAPI_VERSION_PATCH` | `4` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` | `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` | `LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` |
 | `REMIX_WINAPI_MAX_PATH` | `MAX_PATH` |
@@ -34,6 +34,38 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` | `0x00001000` |
 | `REMIX_WINAPI_MAX_PATH` | `260` |
 | `REMIXAPI_INSTANCE_INFO_MAX_BONES_COUNT` | `256` |
+| `REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES` | `0x52584301u` |
+| `REMIXAPI_D3D9_RS_FORCE_CATEGORIES` | `0x52584302u` |
+| `REMIXAPI_D3D9_RS_ALBEDO_TINT` | `0x52584303u` |
+| `REMIXAPI_D3D9_ALBEDO_TINT_NONE` | `0u` |
+| `REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA` | `1u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER` | `0x52584304u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X` | `0x52584305u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y` | `0x52584306u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z` | `0x52584307u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE` | `0x52584308u` |
+| `REMIXAPI_D3D9_RS_TERRAIN_LAYER_FEATURES` | `0x52584309u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_ENABLE` | `0x1u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_STAGE_SHIFT` | `1u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_HAS_MASK` | `0x10u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_MASK_STAGE_SHIFT` | `5u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_STAGE_MASK` | `0x7u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_SHIFT` | `8u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_MASK` | `0x3u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_XZ` | `0u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_XY` | `1u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_PROJECTION_ZY` | `2u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_COLOR_ALPHA_IN_COVERAGE` | `0x400u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_DESCRIPTION_ONLY` | `0x800u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED` | `0x1000u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE` | `0x2000u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER` | `0x4000u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE` | `0x8000u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT` | `16u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY` | `0x1u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED` | `0x2u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER` | `0x4u` |
+| `REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE` | `0x8u` |
 
 ---
 
@@ -96,6 +128,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT` | `27` |  |
 | `REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO` | `28` |  |
 | `REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_GAME_TEXTURES_EXT` | `29` |  |
+| `REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT` | `30` |  |
 
 ### `remixapi_ErrorCode`
 
@@ -475,6 +508,21 @@ Valid only if remixapi_MaterialInfo contains remixapi_MaterialInfoOpaqueEXT in p
 | `remixapi_StructType` | `sType` |  |
 | `void*` | `pNext` |  |
 | `uint32_t` | `objectPickingValue` | A value to write for 'RequestObjectPicking' |
+
+### `remixapi_InstanceInfoAlbedoTintEXT`
+
+Tints the instance's albedo where its albedo texture's alpha is below one:
+albedo.rgb *= lerp(tint.rgb, 1, albedo.a)
+The alpha is then a tint mask, not coverage, so it does not set the opacity. This is the
+shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR, for an API
+instance, so one material can be drawn in several tints (a game's dyed cloth). The tint is
+gamma encoded like the texture's colour. Without the extension the albedo is not tinted.
+
+| Type | Field | Notes |
+| :-- | :-- | :-- |
+| `remixapi_StructType` | `sType` |  |
+| `void*` | `pNext` |  |
+| `uint32_t` | `tint` | 0xAARRGGBB, as D3DCOLOR; alpha is ignored |
 
 ### `remixapi_AnimatedFloat1D`
 

@@ -1032,6 +1032,12 @@ std::unique_ptr<dxvk::ExternalDrawState> dxvk::RemixAPIPrivateAccessor::toRtDraw
     prototype.materialData.blendMode.writeMask = (VkColorComponentFlags) extBlend->writeMask;
   }
 
+  // After the blend extension: the tint owns the texture factor it is carried in.
+  if (auto extTint = pnext::find<remixapi_InstanceInfoAlbedoTintEXT>(&info)) {
+    prototype.materialData.tFactor = extTint->tint | 0xFF000000u;
+    prototype.materialData.isAlbedoTintMaskedByAlpha = true;
+  }
+
   if (auto extParticles = pnext::find<remixapi_InstanceInfoParticleSystemEXT>(&info)) {
     state->optionalParticleDesc.emplace(convert::toRtParticleDesc(*extParticles));
   }

@@ -4839,4 +4839,17 @@ that was introduced with this API was removed again (files, options, UI,
 - **`src/dxvk/rtx_render/rtx_fork_hooks.h`, `rtx_fork_submit.cpp`** - fork-owned. *The submit hooks draw colormap-keyed materials like D3D9 draws (replacement merged over the game state, or the legacy-defaults material) and use the key for categories.*
 - **`bridge/src/{client/remix_api.cpp, server/main.cpp, util/util_remixapi.{h,cpp}}`** - inline. *`MaterialInfoGameTexturesEXT` serialization (texture proxy sent as D3D object id, resolved via `gpD3DResources`), `CreateMesh` pNext loop fix.*
 - **`RtxOptions.md`** - REGEN PENDING (`rtx.autopbr.*` entries are gone). **`RemixApiSurface.md`** - regenerated.
+---
 
+## Workstream - Per-instance albedo tint for API instances (fork - 2026-10-17)
+
+API `0.1000.4`: `remixapi_InstanceInfoAlbedoTintEXT { sType, pNext, tint }`. An API instance
+carrying it is shaded like a D3D9 draw with `REMIXAPI_D3D9_RS_ALBEDO_TINT` and that texture
+factor: `albedo.rgb *= lerp(tint.rgb, 1, albedo.a)`, alpha not taken as opacity. One material
+(and its replacement) then serves every tint, as a game's dyed cloth needs.
+
+- **`public/include/remix/remix_c.h`** - inline. *`REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT` (30), `remixapi_InstanceInfoAlbedoTintEXT`, version `0.1000.4`.*
+- **`src/dxvk/rtx_render/rtx_remix_specialization.inl`** - inline, 3 LOC. *Registers the struct (AllTypes / ToEnum / Root = `remixapi_InstanceInfo`).*
+- **`src/dxvk/rtx_render/rtx_remix_api.cpp`** - inline, +6 LOC in `toRtDrawState`, after the blend extension. *Sets `materialData.tFactor` and `isAlbedoTintMaskedByAlpha`; the existing surface copy and shading do the rest.*
+- **`bridge/src/{client/remix_api.cpp, server/main.cpp, util/util_remixapi.{h,cpp}}`** - inline. *Serialization, as `InstanceInfoObjectPickingEXT`.*
+- **`RemixApiSurface.md`** - regenerated.

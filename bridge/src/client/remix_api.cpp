@@ -347,6 +347,13 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DrawInstance(const remixapi_InstanceIn
           serializeAndSend<serialize::InstanceInfoObjectPicking>(c, *pObjectPicking);
           break;
         }
+        case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT:
+        {
+          auto* pTint = static_cast<const remixapi_InstanceInfoAlbedoTintEXT* const>(infoItr);
+          send(c, Bool::True);
+          serializeAndSend<serialize::InstanceInfoAlbedoTint>(c, *pTint);
+          break;
+        }
         case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
         {
           auto* pBlend = static_cast<const remixapi_InstanceInfoBlendEXT* const>(infoItr);

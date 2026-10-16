@@ -3031,6 +3031,7 @@ void ProcessDeviceCommandQueue() {
         // supported at a time
         struct InstanceExtensions {
           serialize::InstanceInfoObjectPicking objectPicking;
+          serialize::InstanceInfoAlbedoTint albedoTint;
           serialize::InstanceInfoBlend blend;
           serialize::InstanceInfoTransforms boneXforms;
           serialize::InstanceInfoParticleSystem particleSystem;
@@ -3062,6 +3063,14 @@ void ProcessDeviceCommandQueue() {
               deserializeFromQueue(exts.objectPicking);
               pInfoProto->pNext = &(exts.objectPicking);
               pInfoProto = &getInfoProto(exts.objectPicking);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT:
+            {
+              assert(!exts.albedoTint.pNext);
+              deserializeFromQueue(exts.albedoTint);
+              pInfoProto->pNext = &(exts.albedoTint);
+              pInfoProto = &getInfoProto(exts.albedoTint);
               break;
             }
             case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
