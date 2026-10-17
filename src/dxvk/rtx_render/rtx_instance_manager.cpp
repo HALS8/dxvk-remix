@@ -716,10 +716,10 @@ namespace dxvk {
 
     // Note: Use the Opaque Material Data's alpha test state information directly if requested,
     // otherwise derive the alpha test state from the drawcall (via its legacy material data).
-    if (forceCutoutAlphaTest) {
-      out.alphaTestType = AlphaTestType::kGreater;
-      out.alphaTestReferenceValue = static_cast<uint8_t>(RtxOptions::forceCutoutAlpha() * 255.0);
-    } else if (forceHairCardAlphaTest) {
+    // A forced cutout keeps the draw's own alpha test when it has one -- a game that alpha tests
+    // each material at its own reference, and also blends, loses only the blend -- and otherwise
+    // cuts at rtx.forceCutoutAlpha.
+    if (forceAlphaTest) {
       if (!useLegacyAlphaState && materialAlphaTestEnabled) {
         out.alphaTestType = opaqueMaterialData.getAlphaTestType();
         out.alphaTestReferenceValue = opaqueMaterialData.getAlphaTestReferenceValue();

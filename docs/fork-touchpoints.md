@@ -4880,3 +4880,16 @@ game state both carry the secondary texture in.
 - **`src/dxvk/rtx_render/rtx_remix_api.cpp`**, **`rtx_fork_hooks.h`**, **`rtx_fork_game_textures{.h,.cpp,_keyed.cpp}`** - fork-owned / hooks. *`resolveMaterialGameTextures` returns `game_textures::Textures {color, tintMask}`; the mask becomes the keyed material's secondary texture and part of its game state.*
 - **`bridge/src/{client/remix_api.cpp, server/main.cpp, util/util_remixapi.cpp}`** - inline. *Serialization of both fields.*
 - **`RemixApiSurface.md`** - regenerated.
+---
+
+## Workstream - Forced cutout keeps the draw's own alpha test (fork - 2026-10-17)
+
+`InstanceCategories::AlphaBlendToCutout` (the cutout texture list, or
+`REMIXAPI_INSTANCE_CATEGORY_BIT_ALPHA_BLEND_TO_CUTOUT` forced per draw) now resolves its alpha test
+like `HairCards`: the material's own test, else the draw's legacy test, else `rtx.forceCutoutAlpha`.
+A game that alpha tests each material at its own reference and also blends -- the blend only
+softening the edge -- loses the blend but keeps its references; before, every such draw was cut at
+the one global value. Draws without a test behave as before.
+
+- **`src/dxvk/rtx_render/rtx_instance_manager.cpp`** - inline. *`createAlphaState`: the forced-cutout branch joins the hair-card branch.*
+- **`src/dxvk/rtx_render/rtx_options.h`** - inline. *`rtx.forceCutoutAlpha` description.* `RtxOptions.md` - REGEN PENDING.
