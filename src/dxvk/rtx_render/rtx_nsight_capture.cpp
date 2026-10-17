@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <optional>
 
 #ifndef DXVK_ENABLE_NSIGHT_GRAPHICS_CAPTURE
 #define DXVK_ENABLE_NSIGHT_GRAPHICS_CAPTURE 0
@@ -197,6 +198,17 @@ namespace dxvk {
     setLastResultText(lastResultText);
     Logger::warn(str::format("[Nsight Graphics Capture] ", lastResultText));
 #endif
+  }
+
+  void NsightGraphicsCapture::onGraphicsCaptureRequestChanged(DxvkDevice*) {
+    // Change callbacks also run once at startup; that first value is the baseline, not a request.
+    static std::optional<uint32_t> s_lastRequest;
+    const uint32_t request = graphicsCaptureRequest();
+    const bool changed = s_lastRequest.has_value() && *s_lastRequest != request;
+    s_lastRequest = request;
+    if (changed) {
+      requestGraphicsCapture(graphicsCaptureFramesToCapture());
+    }
   }
 
   void NsightGraphicsCapture::signalFrameBoundary(VkQueue queue) {

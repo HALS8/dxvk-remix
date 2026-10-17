@@ -65,6 +65,12 @@ namespace dxvk {
                     args.maxValue = kMaxFramesToCapture);
     RTX_OPTION_ENV("rtx.nsight", bool, graphicsCaptureShowHud, false, "DXVK_NSIGHT_GRAPHICS_SHOW_HUD",
                    "Shows the Nsight Graphics HUD when self-injected capture is enabled. Changes take effect after saving rtx.conf and reloading.");
+
+    static void onGraphicsCaptureRequestChanged(DxvkDevice* device);
+    RTX_OPTION_ARGS("rtx.nsight", uint32_t, graphicsCaptureRequest, 0,
+                    "Triggers a capture of graphicsCaptureFramesToCapture frames each time the value changes, as the Trigger Nsight Graphics Capture button does,\n"
+                    "so a script or tool can take captures through the config-variable interface. The value the runtime starts with never triggers one. Never saved.",
+                    args.onChangeCallback = &onGraphicsCaptureRequestChanged, args.flags = RtxOptionFlags::NoSave);
   };
 
 }

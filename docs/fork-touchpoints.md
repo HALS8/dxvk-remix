@@ -4893,3 +4893,14 @@ the one global value. Draws without a test behave as before.
 
 - **`src/dxvk/rtx_render/rtx_instance_manager.cpp`** - inline. *`createAlphaState`: the forced-cutout branch joins the hair-card branch.*
 - **`src/dxvk/rtx_render/rtx_options.h`** - inline. *`rtx.forceCutoutAlpha` description.* `RtxOptions.md` - REGEN PENDING.
+---
+
+## Workstream - Scriptable Nsight Graphics capture trigger (fork - 2026-10-17)
+
+`rtx.nsight.graphicsCaptureRequest` takes a self-injected Nsight Graphics capture each time its value
+changes, as the Development settings button does, so a test harness or tool can take captures at
+chosen moments through the config-variable interface (`remixapi_SetConfigVariable`). The value at
+startup is only a baseline, and the option is `NoSave`, so a saved conf can never fire a capture.
+
+- **`src/dxvk/rtx_render/rtx_nsight_capture.{h,cpp}`** - inline. *The option and its change callback.*
+- **`RtxOptions.md`** - one row added.
