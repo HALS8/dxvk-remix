@@ -77,33 +77,47 @@ namespace {
 
 namespace fork_hooks {
 
-  std::shared_ptr<const game_textures::Texture> resolveMaterialGameTextures(
+  game_textures::Textures resolveMaterialGameTextures(
       D3D9DeviceEx* remixDevice,
       const remixapi_MaterialInfo& info,
-      const remixapi_MaterialInfoGameTexturesEXT* ext) {
+      const remixapi_MaterialInfoGameTexturesEXT* ext,
+      bool hasTintMask) {
     if (remixDevice == nullptr || ext == nullptr) {
-      return nullptr;
+      return {};
     }
     if (ext->sType != REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_GAME_TEXTURES_EXT) {
       ONCE(Logger::warn("[RTX-GameTextures] Ignoring malformed remixapi_MaterialInfoGameTexturesEXT."));
-      return nullptr;
+      return {};
     }
     if (!isEmptyPath(info.albedoTexture)) {
       ONCE(Logger::warn("[RTX-GameTextures] remixapi_MaterialInfoGameTexturesEXT is ignored on a material with an albedoTexture."));
-      return nullptr;
+      return {};
     }
 
     auto lock = remixDevice->LockDevice();
     s_owner = remixDevice;
 
+    game_textures::Textures out;
     D3D9Texture2D* texture = asTexture2D(remixDevice, ext->colorTexture);
     auto color = std::make_shared<game_textures::Texture>();
     if (texture == nullptr || !resolveTexture(texture, *color)) {
       ONCE(Logger::warn("[RTX-GameTextures] The colorTexture of a material without albedoTexture is missing or not filled "
                         "before CreateMaterial; it renders without albedo."));
-      return nullptr;
+      return {};
     }
-    return color;
+    out.color = std::move(color);
+
+    if (hasTintMask && ext->tintMaskTexture != nullptr) {
+      D3D9Texture2D* maskTexture = asTexture2D(remixDevice, ext->tintMaskTexture);
+      auto mask = std::make_shared<game_textures::Texture>();
+      if (maskTexture != nullptr && resolveTexture(maskTexture, *mask)) {
+        out.tintMask = std::move(mask);
+      } else {
+        ONCE(Logger::warn("[RTX-GameTextures] The tintMaskTexture of a material is not filled before CreateMaterial; "
+                          "its tint is not masked by it."));
+      }
+    }
+    return out;
   }
 
   void shutdownGameTextures(D3D9DeviceEx* remixDevice) {

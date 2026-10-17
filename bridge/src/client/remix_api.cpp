@@ -130,6 +130,7 @@ uint32_t toGameTextureId(IDirect3DTexture9* const pTexture) {
 void sendGameTextures(ClientMessage& msg, const remixapi_MaterialInfoGameTexturesEXT& info) {
   auto translated = info;
   translated.colorTexture = reinterpret_cast<IDirect3DTexture9*>((uintptr_t) toGameTextureId(info.colorTexture));
+  translated.tintMaskTexture = reinterpret_cast<IDirect3DTexture9*>((uintptr_t) toGameTextureId(info.tintMaskTexture));
   serializeAndSend<serialize::MaterialInfoGameTextures>(msg, translated);
 }
 

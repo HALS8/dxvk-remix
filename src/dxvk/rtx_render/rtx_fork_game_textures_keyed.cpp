@@ -56,9 +56,12 @@ namespace {
   }
 
   // The state a D3D9 draw takes from the game rather than from the material:
-  // albedo, sampler filter / wrap and alpha test / blend.
+  // albedo, tint mask, sampler filter / wrap and alpha test / blend.
   void copyGameState(const OpaqueMaterialData& src, OpaqueMaterialData& dst) {
     dst.setAlbedoOpacityTexture(src.getAlbedoOpacityTexture());
+    if (src.getSecondaryTexture().isValid()) {
+      dst.setSecondaryTexture(src.getSecondaryTexture());
+    }
     dst.setFilterMode(src.getFilterMode());
     dst.setWrapModeU(src.getWrapModeU());
     dst.setWrapModeV(src.getWrapModeV());
@@ -143,10 +146,11 @@ namespace fork_hooks {
   MaterialData applyMaterialGameTextures(
       remixapi_MaterialHandle handle,
       MaterialData&& material,
-      const std::shared_ptr<const game_textures::Texture>& color) {
+      const game_textures::Textures& textures) {
     // A handle can be re-created; drop what the previous material registered.
     forgetMaterialGameTextures(handle);
 
+    const auto& color = textures.color;
     if (color == nullptr || !color->isValid() || material.getType() != MaterialDataType::Opaque) {
       return std::move(material);
     }
@@ -158,6 +162,9 @@ namespace fork_hooks {
 
     OpaqueMaterialData gameState = material.getOpaqueMaterialData();
     gameState.setAlbedoOpacityTexture(TextureRef(color->view));
+    if (textures.tintMask != nullptr && textures.tintMask->isValid()) {
+      gameState.setSecondaryTexture(TextureRef(textures.tintMask->view));
+    }
     copyGameState(gameState, keyed.gameState);
     keyed.legacy = std::make_shared<MaterialData>(makeLegacyMaterial(keyed));
     keyed.legacyStamp = legacyDefaultsStamp(keyed.key);

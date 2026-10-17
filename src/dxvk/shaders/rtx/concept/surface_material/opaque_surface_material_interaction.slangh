@@ -702,7 +702,7 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     else
     {
       // A tint mask in the alpha channel is not coverage, so opacity keeps the material constant.
-      if (!surface.isAlbedoTintMaskedByAlpha)
+      if (surface.albedoTintMask != uint8_t(AlbedoTintMask::AlbedoAlpha))
       {
         opacity = albedoOpacitySample.a;
       }
@@ -732,9 +732,17 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
   // The tint is gamma-encoded like the texture colour. A multiply commutes with the transfer curve
   // (exactly for a power curve, closely for sRGB), so an albedo already linearised by the sampler
   // takes the linearised factor.
-  if (surface.isAlbedoTintMaskedByAlpha && albedoOpacityLoaded)
+  if (surface.albedoTintMask != uint8_t(AlbedoTintMask::None) && albedoOpacityLoaded)
   {
-    const vec3 tint = mix(tFactor.rgb, vec3(1.0f), albedoOpacitySample.a);
+    float mask = albedoOpacitySample.a;
+    if (surface.albedoTintMask == uint8_t(AlbedoTintMask::SecondaryAlpha))
+    {
+      // Without its mask texture the surface is not tinted.
+      vec4 maskSample;
+      mask = surfaceMaterialInteractionTextureReadHelper(opaqueSurfaceMaterial.secondaryTextureIndex, opaqueSurfaceMaterial.samplerIndex, surfaceInteraction, maskSample, materialLodBias)
+        ? maskSample.a : 1.0f;
+    }
+    const vec3 tint = mix(tFactor.rgb, vec3(1.0f), mask);
     albedo *= albedoAlreadyLinear ? gammaToLinear(tint) : tint;
   }
 

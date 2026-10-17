@@ -327,7 +327,7 @@ namespace dxvk {
     uint32_t m_forcedCategoryBits = 0;
     CategoryFlags m_forcedCategories = 0;
     uint32_t m_albedoTint = 0;
-    bool m_albedoTintMaskedByAlpha = false;
+    AlbedoTintMask m_albedoTintMask = AlbedoTintMask::None;
 
     // REMIXAPI_D3D9_RS_TERRAIN_LAYER and the states after it, in their numeric order.
     static constexpr uint32_t kTerrainLayerStateCount = 6;

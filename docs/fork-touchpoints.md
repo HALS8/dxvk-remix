@@ -4853,3 +4853,30 @@ factor: `albedo.rgb *= lerp(tint.rgb, 1, albedo.a)`, alpha not taken as opacity.
 - **`src/dxvk/rtx_render/rtx_remix_api.cpp`** - inline, +6 LOC in `toRtDrawState`, after the blend extension. *Sets `materialData.tFactor` and `isAlbedoTintMaskedByAlpha`; the existing surface copy and shading do the rest.*
 - **`bridge/src/{client/remix_api.cpp, server/main.cpp, util/util_remixapi.{h,cpp}}`** - inline. *Serialization, as `InstanceInfoObjectPickingEXT`.*
 - **`RemixApiSurface.md`** - regenerated.
+---
+
+## Workstream - Albedo tint mask texture (fork - 2026-10-17)
+
+API `0.1000.5`. Some games keep the tint mask in another texture's alpha than the albedo's -- a
+normal map's, say -- and use the albedo's alpha as coverage. The tint mask becomes a choice,
+`AlbedoTintMask { None, AlbedoAlpha, SecondaryAlpha }`, replacing the `isAlbedoTintMaskedByAlpha`
+flag. `SecondaryAlpha` reads the mask from the opaque material's secondary texture (until now used
+only by eyes), sampled with the albedo's coordinates and sampler, and keeps the albedo's alpha as
+coverage. A replacement keeps the mask: the D3D9 merge (`mergeLegacyMaterial`) and the colormap-keyed
+game state both carry the secondary texture in.
+
+- D3D9: `REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA` (2); the mask is the draw's second
+  texture, stage 1 on a shader draw.
+- API: `remixapi_MaterialInfoGameTexturesEXT::tintMaskTexture` and
+  `remixapi_InstanceInfoAlbedoTintEXT::maskByTintMaskTexture`, both read only from callers of
+  `0.1000.5` or later.
+
+- **`public/include/remix/remix_c.h`** - inline. *The two fields, the render-state value, version `0.1000.5`.*
+- **`src/dxvk/shaders/rtx/concept/surface/surface_shared.h`** - inline. *`AlbedoTintMask`.*
+- **`src/dxvk/rtx_render/rtx_materials.h / .cpp`** - inline. *`albedoTintMask` on `LegacyMaterialData` and `RtSurface` (`textureFlags` bits 15-16), identity hash, `mergeLegacyMaterial` carries the secondary texture for `SecondaryAlpha`.*
+- **`src/dxvk/rtx_render/rtx_instance_manager.cpp`** - inline. *Surface copy.*
+- **`src/dxvk/shaders/rtx/concept/surface/surface.h`**, **`.../opaque_surface_material_interaction.slangh`** - inline. *Decode; the mask read and the opacity rule.*
+- **`src/d3d9/d3d9_rtx.h / .cpp`** - inline. *Render-state value to mask.*
+- **`src/dxvk/rtx_render/rtx_remix_api.cpp`**, **`rtx_fork_hooks.h`**, **`rtx_fork_game_textures{.h,.cpp,_keyed.cpp}`** - fork-owned / hooks. *`resolveMaterialGameTextures` returns `game_textures::Textures {color, tintMask}`; the mask becomes the keyed material's secondary texture and part of its game state.*
+- **`bridge/src/{client/remix_api.cpp, server/main.cpp, util/util_remixapi.cpp}`** - inline. *Serialization of both fields.*
+- **`RemixApiSurface.md`** - regenerated.

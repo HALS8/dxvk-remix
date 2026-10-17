@@ -897,7 +897,7 @@ namespace dxvk {
 
     // Fetch all the legacy state (colour modes, alpha test, etc...)
     setLegacyMaterialState(m_parent, m_parent->m_alphaSwizzleRTs & (1 << kRenderTargetIndex), m_activeDrawCallState.materialData);
-    m_activeDrawCallState.materialData.isAlbedoTintMaskedByAlpha = m_albedoTintMaskedByAlpha;
+    m_activeDrawCallState.materialData.albedoTintMask = m_albedoTintMask;
     setTerrainLayerState();
 
     // Fetch fog state 
@@ -1119,7 +1119,11 @@ namespace dxvk {
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {
     m_albedoTint = mode;
-    m_albedoTintMaskedByAlpha = mode == REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA;
+    switch (mode) {
+    case REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA:           m_albedoTintMask = AlbedoTintMask::AlbedoAlpha; break;
+    case REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA: m_albedoTintMask = AlbedoTintMask::SecondaryAlpha; break;
+    default:                                                  m_albedoTintMask = AlbedoTintMask::None; break;
+    }
   }
 
   void D3D9Rtx::triggerInjectRTX() {

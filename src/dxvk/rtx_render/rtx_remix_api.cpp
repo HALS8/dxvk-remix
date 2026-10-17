@@ -24,6 +24,7 @@
 
 #include "rtx_asset_data_manager.h"
 #include "rtx_asset_replacer.h"
+#include "rtx_fork_game_textures.h"
 #include "rtx_light_manager.h"
 #include "rtx_lights.h"
 #include "rtx_objectpicking.h"
@@ -1035,7 +1036,8 @@ std::unique_ptr<dxvk::ExternalDrawState> dxvk::RemixAPIPrivateAccessor::toRtDraw
   // After the blend extension: the tint owns the texture factor it is carried in.
   if (auto extTint = pnext::find<remixapi_InstanceInfoAlbedoTintEXT>(&info)) {
     prototype.materialData.tFactor = extTint->tint | 0xFF000000u;
-    prototype.materialData.isAlbedoTintMaskedByAlpha = true;
+    const bool bySecondary = s_apiVersion >= REMIXAPI_VERSION_MAKE(0, 1000, 5) && extTint->maskByTintMaskTexture;
+    prototype.materialData.albedoTintMask = bySecondary ? AlbedoTintMask::SecondaryAlpha : AlbedoTintMask::AlbedoAlpha;
   }
 
   if (auto extParticles = pnext::find<remixapi_InstanceInfoParticleSystemEXT>(&info)) {
@@ -1086,7 +1088,8 @@ namespace {
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
 
-    auto gameTextures = dxvk::fork_hooks::resolveMaterialGameTextures(remixDevice, *info, pnext::find<remixapi_MaterialInfoGameTexturesEXT>(info));
+    auto gameTextures = dxvk::fork_hooks::resolveMaterialGameTextures(remixDevice, *info, pnext::find<remixapi_MaterialInfoGameTexturesEXT>(info),
+                                                                      s_apiVersion >= REMIXAPI_VERSION_MAKE(0, 1000, 5));
 
     // async load
     std::lock_guard lock { s_mutex };

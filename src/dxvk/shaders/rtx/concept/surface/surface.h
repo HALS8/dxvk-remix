@@ -471,10 +471,10 @@ struct Surface
     set { data13.z = newValue ? packedFlagSet(data13.z, 1 << 14) : packedFlagUnset(data13.z, 1 << 14); }
   }
 
-  property bool isAlbedoTintMaskedByAlpha
+  property uint8_t albedoTintMask
   {
-    get { return packedFlagGet(data13.z, 1 << 15); }
-    set { data13.z = newValue ? packedFlagSet(data13.z, 1 << 15) : packedFlagUnset(data13.z, 1 << 15); }
+    get { return uint8_t((data13.z >> 15) & 0x3); }
+    set { data13.z = (data13.z & ~(0x3 << 15)) | (uint32_t(newValue & 0x3) << 15); }
   }
 
   property uint tFactor

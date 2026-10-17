@@ -77,9 +77,13 @@
 //
 // PATCH 4 added remixapi_InstanceInfoAlbedoTintEXT (a per-instance albedo tint
 // masked by the albedo texture's alpha).
+//
+// PATCH 5 added a tint mask texture: remixapi_MaterialInfoGameTexturesEXT::tintMaskTexture,
+// remixapi_InstanceInfoAlbedoTintEXT::maskByTintMaskTexture and
+// REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA.
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 1000
-#define REMIXAPI_VERSION_PATCH 4
+#define REMIXAPI_VERSION_PATCH 5
 
 
 // External
@@ -497,17 +501,22 @@ extern "C" {
     uint32_t                       objectPickingValue;
   } remixapi_InstanceInfoObjectPickingEXT;
 
-  // Tints the instance's albedo where its albedo texture's alpha is below one:
-  //   albedo.rgb *= lerp(tint.rgb, 1, albedo.a)
-  // The alpha is then a tint mask, not coverage, so it does not set the opacity. This is the
-  // shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR, for an API
-  // instance, so one material can be drawn in several tints (a game's dyed cloth). The tint is
-  // gamma encoded like the texture's colour. Without the extension the albedo is not tinted.
+  // Tints the instance's albedo where a mask is below one:
+  //   albedo.rgb *= lerp(tint.rgb, 1, mask)
+  // This is the shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR,
+  // for an API instance, so one material can be drawn in several tints (a game's dyed cloth). The
+  // tint is gamma encoded like the texture's colour. Without the extension the albedo is not
+  // tinted.
   typedef struct remixapi_InstanceInfoAlbedoTintEXT {
     remixapi_StructType            sType;
     void*                          pNext;
     // 0xAARRGGBB, as D3DCOLOR; alpha is ignored
     uint32_t                       tint;
+    // FALSE: the mask is the albedo texture's alpha, which is then not coverage, so it does not
+    // set the opacity. TRUE: the mask is the alpha of the material's
+    // remixapi_MaterialInfoGameTexturesEXT::tintMaskTexture, and the albedo's alpha stays
+    // coverage; a material without one is not tinted. Since 0.1000.5; read as FALSE before.
+    remixapi_Bool                  maskByTintMaskTexture;
   } remixapi_InstanceInfoAlbedoTintEXT;
 
   // Bit values match upstream NVIDIA dxvk-remix exactly. These are a published
@@ -582,20 +591,25 @@ extern "C" {
   // rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
   #define REMIXAPI_D3D9_RS_FORCE_CATEGORIES 0x52584302u
 
-  // D3D9 per-draw albedo tint, masked by the albedo texture's alpha.
+  // D3D9 per-draw albedo tint, masked by a texture's alpha.
   //
-  // Some games keep a mask in the albedo texture's alpha that says where a per-draw constant
-  // colour tints the surface -- cloth or armour in a player-chosen colour -- and apply it in a
-  // pixel shader, which Remix does not run. A caller that knows the colour sets it as
-  // D3DRS_TEXTUREFACTOR (ignored by D3D9 while a pixel shader is bound), sets this render state to
-  // REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA, and the following draws get
+  // Some games keep a mask in a texture's alpha that says where a per-draw constant colour tints
+  // the surface -- cloth or armour in a player-chosen colour -- and apply it in a pixel shader,
+  // which Remix does not run. A caller that knows the colour sets it as D3DRS_TEXTUREFACTOR
+  // (ignored by D3D9 while a pixel shader is bound), sets this render state to say where the mask
+  // is, and the following draws get
   //
-  //   albedo.rgb *= lerp(D3DRS_TEXTUREFACTOR.rgb, 1, albedo.a)
+  //   albedo.rgb *= lerp(D3DRS_TEXTUREFACTOR.rgb, 1, mask)
   //
-  // where albedo.a is the alpha sampled from the albedo texture, a replacement material's
-  // included: 1 leaves a texel as it is, 0 takes the full tint. The tint is gamma-encoded like the
-  // texture colour and is applied in that space. The alpha is spent on the mask, so these draws do
-  // not take opacity from it; texture stage alpha operations still combine the other sources.
+  // 1 leaves a texel as it is, 0 takes the full tint. The tint is gamma-encoded like the texture
+  // colour and is applied in that space. The mask is:
+  //
+  //   REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA: the alpha sampled from the albedo texture, a
+  //     replacement material's included. The alpha is spent on the mask, so these draws do not
+  //     take opacity from it; texture stage alpha operations still combine the other sources.
+  //   REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA: the alpha of the draw's second texture
+  //     (stage 1 on a shader draw), sampled with the albedo's texture coordinates and sampler. The
+  //     albedo's alpha stays coverage. A replacement material keeps that texture as the mask.
   //
   //   device->SetRenderState(D3DRS_TEXTUREFACTOR, D3DCOLOR_XRGB(r, g, b));
   //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_ALBEDO_TINT,
@@ -606,6 +620,7 @@ extern "C" {
   #define REMIXAPI_D3D9_RS_ALBEDO_TINT 0x52584303u
   #define REMIXAPI_D3D9_ALBEDO_TINT_NONE 0u
   #define REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA 1u
+  #define REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA 2u
 
   // D3D9 per-draw terrain layer description.
   //
@@ -1113,6 +1128,11 @@ extern "C" {
     remixapi_StructType sType;
     void*               pNext;
     IDirect3DTexture9*  colorTexture;
+    // Optional. Its alpha masks the tint of instances drawn with
+    // remixapi_InstanceInfoAlbedoTintEXT::maskByTintMaskTexture, sampled with the albedo's
+    // texture coordinates and sampler. A replacement of the material keeps it. Since 0.1000.5;
+    // read as null before.
+    IDirect3DTexture9*  tintMaskTexture;
   } remixapi_MaterialInfoGameTexturesEXT;
 
 

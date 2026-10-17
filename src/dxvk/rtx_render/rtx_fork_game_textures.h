@@ -30,6 +30,13 @@ namespace dxvk {
       }
     };
 
+    // The game textures of one API material.
+    struct Textures {
+      std::shared_ptr<const Texture> color;
+      // Its alpha masks an albedo tint; see remixapi_MaterialInfoGameTexturesEXT.
+      std::shared_ptr<const Texture> tintMask;
+    };
+
     // Render thread. Colormap key of an API material, kEmptyHash when it has none.
     XXH64_hash_t findMaterialKey(remixapi_MaterialHandle handle);
 

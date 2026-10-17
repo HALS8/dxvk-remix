@@ -70,6 +70,7 @@ namespace dxvk {
 
   namespace game_textures {
     struct Texture;
+    struct Textures;
   }
 
   namespace fork_hooks {
@@ -610,23 +611,26 @@ namespace dxvk {
     // Colormap-keyed API materials (remixapi_MaterialInfoGameTexturesEXT)
     // -----------------------------------------------------------------------
 
-    // remixapi_CreateMaterial, API thread: resolves the colorTexture of a chained
-    // remixapi_MaterialInfoGameTexturesEXT (null when absent, malformed, or the
-    // material has an albedoTexture).
+    // remixapi_CreateMaterial, API thread: resolves the textures of a chained
+    // remixapi_MaterialInfoGameTexturesEXT (color null when absent, malformed, or
+    // the material has an albedoTexture). hasTintMask: the caller's struct has
+    // tintMaskTexture (API 0.1000.5 and later).
     // Implementation in rtx_fork_game_textures.cpp.
-    std::shared_ptr<const game_textures::Texture> resolveMaterialGameTextures(
+    game_textures::Textures resolveMaterialGameTextures(
       D3D9DeviceEx* remixDevice,
       const remixapi_MaterialInfo& info,
-      const remixapi_MaterialInfoGameTexturesEXT* ext);
+      const remixapi_MaterialInfoGameTexturesEXT* ext,
+      bool hasTintMask);
 
     // remixapi_CreateMaterial, render thread. An opaque material with a resolved
     // color texture becomes a legacy-defaults material (as a non-replaced D3D9
-    // draw) using that texture, keyed by its hash. Pass-through when color is null.
+    // draw) using that texture, keyed by its hash, with the tint mask as its
+    // secondary texture. Pass-through when color is null.
     // Implementation in rtx_fork_game_textures_keyed.cpp.
     MaterialData applyMaterialGameTextures(
       remixapi_MaterialHandle handle,
       MaterialData&& material,
-      const std::shared_ptr<const game_textures::Texture>& color);
+      const game_textures::Textures& textures);
 
     // remixapi_DestroyMaterial, render thread.
     // Implementation in rtx_fork_game_textures_keyed.cpp.

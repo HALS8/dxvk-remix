@@ -170,22 +170,26 @@ static void deserializeFromQueue(SerializableT& serializableT) {
 }
 
 // Game textures arrive as client D3D object ids, map them to the server-side textures
-static void resolveGameTextures(serialize::MaterialInfoGameTextures& info) {
-  const uint32_t textureId = (uint32_t) (uintptr_t) info.colorTexture;
-  info.colorTexture = nullptr;
+static IDirect3DTexture9* resolveGameTexture(IDirect3DTexture9* clientId) {
+  const uint32_t textureId = (uint32_t) (uintptr_t) clientId;
   if (textureId == 0) {
-    return;
+    return nullptr;
   }
   const auto it = gpD3DResources.find(textureId);
   if (it != gpD3DResources.end() && it->second && it->second->GetType() == D3DRTYPE_TEXTURE) {
-    info.colorTexture = (IDirect3DTexture9*) it->second;
-  } else {
-    static bool warned = false;
-    if (!warned) {
-      Logger::warn("[RemixApi] Game texture is not a known 2D texture. Treating as null.");
-      warned = true;
-    }
+    return (IDirect3DTexture9*) it->second;
   }
+  static bool warned = false;
+  if (!warned) {
+    Logger::warn("[RemixApi] Game texture is not a known 2D texture. Treating as null.");
+    warned = true;
+  }
+  return nullptr;
+}
+
+static void resolveGameTextures(serialize::MaterialInfoGameTextures& info) {
+  info.colorTexture = resolveGameTexture(info.colorTexture);
+  info.tintMaskTexture = resolveGameTexture(info.tintMaskTexture);
 }
 }
 

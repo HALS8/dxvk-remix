@@ -26,7 +26,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_VERSION_GET_PATCH(version)` | `(((uint64_t)(version)      ) & (uint64_t)0xFFFF)` |
 | `REMIXAPI_VERSION_MAJOR` | `0` |
 | `REMIXAPI_VERSION_MINOR` | `1000` |
-| `REMIXAPI_VERSION_PATCH` | `4` |
+| `REMIXAPI_VERSION_PATCH` | `5` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` | `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` | `LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` |
 | `REMIX_WINAPI_MAX_PATH` | `MAX_PATH` |
@@ -39,6 +39,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_D3D9_RS_ALBEDO_TINT` | `0x52584303u` |
 | `REMIXAPI_D3D9_ALBEDO_TINT_NONE` | `0u` |
 | `REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_ALPHA` | `1u` |
+| `REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA` | `2u` |
 | `REMIXAPI_D3D9_RS_TERRAIN_LAYER` | `0x52584304u` |
 | `REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X` | `0x52584305u` |
 | `REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y` | `0x52584306u` |
@@ -511,18 +512,19 @@ Valid only if remixapi_MaterialInfo contains remixapi_MaterialInfoOpaqueEXT in p
 
 ### `remixapi_InstanceInfoAlbedoTintEXT`
 
-Tints the instance's albedo where its albedo texture's alpha is below one:
-albedo.rgb *= lerp(tint.rgb, 1, albedo.a)
-The alpha is then a tint mask, not coverage, so it does not set the opacity. This is the
-shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR, for an API
-instance, so one material can be drawn in several tints (a game's dyed cloth). The tint is
-gamma encoded like the texture's colour. Without the extension the albedo is not tinted.
+Tints the instance's albedo where a mask is below one:
+albedo.rgb *= lerp(tint.rgb, 1, mask)
+This is the shading REMIXAPI_D3D9_RS_ALBEDO_TINT gives a D3D9 draw with D3DRS_TEXTUREFACTOR,
+for an API instance, so one material can be drawn in several tints (a game's dyed cloth). The
+tint is gamma encoded like the texture's colour. Without the extension the albedo is not
+tinted.
 
 | Type | Field | Notes |
 | :-- | :-- | :-- |
 | `remixapi_StructType` | `sType` |  |
 | `void*` | `pNext` |  |
 | `uint32_t` | `tint` | 0xAARRGGBB, as D3DCOLOR; alpha is ignored |
+| `remixapi_Bool` | `maskByTintMaskTexture` | FALSE: the mask is the albedo texture's alpha, which is then not coverage, so it does not set the opacity. TRUE: the mask is the alpha of the material's remixapi_MaterialInfoGameTexturesEXT::tintMaskTexture, and the albedo's alpha stays coverage; a material without one is not tinted. Since 0.1000.5; read as FALSE before. |
 
 ### `remixapi_AnimatedFloat1D`
 
@@ -778,6 +780,7 @@ D3D9 draw of that texture gets.
 | `remixapi_StructType` | `sType` |  |
 | `void*` | `pNext` |  |
 | `IDirect3DTexture9*` | `colorTexture` |  |
+| `IDirect3DTexture9*` | `tintMaskTexture` | Optional. Its alpha masks the tint of instances drawn with remixapi_InstanceInfoAlbedoTintEXT::maskByTintMaskTexture, sampled with the albedo's texture coordinates and sampler. A replacement of the material keeps it. Since 0.1000.5; read as null before. |
 
 ### `remixapi_InitializeLibraryInfo`
 

@@ -78,6 +78,17 @@ enum class DxvkRtTextureOperation : uint8_t {
   Force_Modulate2x,
 };
 
+// Where the mask of an albedo tint (albedo *= lerp(tFactor, 1, mask)) is read.
+enum class AlbedoTintMask : uint8_t {
+  None = 0,
+  // The albedo's alpha, which is then not coverage.
+  AlbedoAlpha,
+  // The material's secondary texture's alpha; the albedo's alpha stays coverage.
+  SecondaryAlpha,
+
+  Count
+};
+
 enum class TexGenMode : uint8_t {
   None = 0,
   ViewPositions,

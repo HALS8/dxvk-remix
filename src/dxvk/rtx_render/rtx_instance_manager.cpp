@@ -1093,7 +1093,7 @@ namespace dxvk {
         currentInstance.surface.isTerrainLayerReceiver = drawCall.getTerrainLayer().receiver;
         currentInstance.surface.associatedGeometryHash = drawCall.getHash(RtxOptions::geometryAssetHashRule());
         currentInstance.surface.isTextureFactorBlend = drawCall.getMaterialData().isTextureFactorBlend;
-        currentInstance.surface.isAlbedoTintMaskedByAlpha = drawCall.getMaterialData().isAlbedoTintMaskedByAlpha;
+        currentInstance.surface.albedoTintMask = drawCall.getMaterialData().albedoTintMask;
         currentInstance.surface.isVertexColorBakedLighting = drawCall.getMaterialData().isVertexColorBakedLighting;
         currentInstance.surface.isMotionBlurMaskOut = currentInstance.testCategoryFlags(InstanceCategories::IgnoreMotionBlur);
 

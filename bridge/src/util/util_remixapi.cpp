@@ -446,14 +446,15 @@ void MaterialInfoPortal::_dtor() {
 }
 
 
-// colorTexture crosses the bridge as the client's D3D object id: the client translates
-// its texture proxy before serializing and the server resolves the id afterwards
+// The textures cross the bridge as the client's D3D object ids: the client translates
+// its texture proxies before serializing and the server resolves the ids afterwards
 uint32_t MaterialInfoGameTextures::_calcSize() const {
-  return fold_helper::calcSize(sType) + sizeOf<uint32_t>();
+  return fold_helper::calcSize(sType) + 2 * sizeOf<uint32_t>();
 }
 void MaterialInfoGameTextures::_serialize(void*& pSerialize) const {
   fold_helper::serialize(pSerialize, sType);
   bridge_util::serialize((uint32_t) (uintptr_t) colorTexture, pSerialize);
+  bridge_util::serialize((uint32_t) (uintptr_t) tintMaskTexture, pSerialize);
 }
 void MaterialInfoGameTextures::_deserialize(void*& pDeserialize) {
   pNext = nullptr;
@@ -461,6 +462,8 @@ void MaterialInfoGameTextures::_deserialize(void*& pDeserialize) {
   uint32_t textureId = 0;
   bridge_util::deserialize(pDeserialize, textureId);
   colorTexture = reinterpret_cast<IDirect3DTexture9*>((uintptr_t) textureId);
+  bridge_util::deserialize(pDeserialize, textureId);
+  tintMaskTexture = reinterpret_cast<IDirect3DTexture9*>((uintptr_t) textureId);
 }
 void MaterialInfoGameTextures::_dtor() {
 }
@@ -638,7 +641,7 @@ void InstanceInfoObjectPicking::_dtor() {
 }
 
 
-#define InstanceInfoAlbedoTintVars tint
+#define InstanceInfoAlbedoTintVars tint, maskByTintMaskTexture
 uint32_t InstanceInfoAlbedoTint::_calcSize() const {
   return fold_helper::calcSize(InstanceInfoAlbedoTintVars);
 }
