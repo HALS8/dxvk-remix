@@ -10,6 +10,7 @@ import sys
 import time
 import threading
 import ctypes
+import fnmatch
 import depfile
 
 report_lock = threading.Lock()
@@ -33,6 +34,8 @@ parser.add_argument('-force', action='store_true', dest='force')
 parser.add_argument('-parallel', action='store_true', dest='parallel')
 parser.add_argument('-binary', action='store_true', dest='binary')
 parser.add_argument('-debug', action='store_true', dest='debug')
+parser.add_argument('-debugfilter', type=str, dest='debugfilter', default='*',
+                    help='under -debug, only shaders whose name matches this glob get debug info')
 args = parser.parse_args()
 
 # Set to True to generate Slang repro file when compiling shaders
@@ -50,10 +53,12 @@ newestTool = max([os.path.getmtime(x) for x in tools])
 # https://github.com/KhronosGroup/glslang/blob/master/SPIRV/SpvTools.cpp#L213
 glslangFlags = '--quiet --target-env vulkan1.2 -Os'
 
-# Note: Debug is used for Debug and DebugOptimized currently, so it does not disable optimizations persay
-# (as otherwise -Od should be passed and be mutually exclusive with -Os), just means to generate debug info.
-if args.debug:
-    glslangFlags += ' -g'
+# Note: Debug is used for Debug and DebugOptimized builds and the shader_debug_info option, so it does not disable optimizations
+# persay (as otherwise -Od should be passed and be mutually exclusive with -Os), just means to generate debug info, for glslang
+# and slangc alike. Debug info multiplies a shader's size several times over, and every shader is embedded in the runtime DLL,
+# so -debugfilter narrows it to the shaders being profiled.
+def withDebugInfo(shaderName):
+    return args.debug and fnmatch.fnmatch(shaderName, args.debugfilter)
 
 os.makedirs(args.output, exist_ok = True)
 
@@ -69,6 +74,8 @@ class Task:
     inputs = []
     commands = []
     customName = None
+    # The same compile without shader debug info, run when the command with it fails.
+    withoutDebugInfo = None
 
     def needsBuild(self):
         if args.force:
@@ -114,6 +121,13 @@ class Task:
 
             process = subprocess.Popen(command, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
             out, err = process.communicate()
+
+            # Debug info is a profiling aid: slangc can emit invalid SPIR-V for some shaders under -g, and those
+            # shaders are then built without it rather than failing the build.
+            if process.returncode != 0 and command == self.commands[0] and self.withoutDebugInfo is not None:
+                printFromThread(f'{self.getName()}: built without debug info, slangc -g failed')
+                process = subprocess.Popen(self.withoutDebugInfo, shell = True, stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+                out, err = process.communicate()
 
             duration = time.time() - timeStart
 
@@ -206,7 +220,8 @@ def createGlslangTask(inputFile):
     task = createBasicTask(inputFile, destFile, destFile, depFile)
     variableName = '' if args.binary else f'--vn {shaderName}'
 
-    command = f'{args.glslang} {glslangFlags} {includePaths} -V {variableName} -o {destFile} ' \
+    debugFlag = ' -g' if withDebugInfo(shaderName) else ''
+    command = f'{args.glslang} {glslangFlags}{debugFlag} {includePaths} -V {variableName} -o {destFile} ' \
             + f'--depfile {depFile} {inputFile}'
     task.commands = [command]
     return task
@@ -241,11 +256,17 @@ def createSlangTask(inputFile, variantSpec):
     # Force scalar block layout in shaders - buffers are required to be aligned as such by Neural Radiance Cache
     command1 += f'-fvk-use-scalar-layout '
 
+    withoutDebugInfo = command1
+    if withDebugInfo(variantName):
+      command1 += f'-g '
+
     if generateSlangRepro:
       reproFile = os.path.join(args.output, variantName + ".slangRepro")
       command1 += f'-dump-repro {reproFile}'
 
     command1 += f'-o {destFile}'
+    if withDebugInfo(variantName):
+      task.withoutDebugInfo = withoutDebugInfo + f'-o {destFile}'
 
     # -binary switch just writes the SPV binary
     if args.binary:

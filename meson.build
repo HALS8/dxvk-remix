@@ -389,6 +389,9 @@ rtx_shaders_command_arguments = [
 if get_option('buildtype').startswith('debug')
   # Note: Append -debug to the argument list for debug-esque builds
   rtx_shaders_command_arguments += [ '-debug' ]
+elif get_option('shader_debug_info_glob') != ''
+  # Note: Debug info for just the shaders matching the shader_debug_info_glob pattern
+  rtx_shaders_command_arguments += [ '-debug', '-debugfilter', get_option('shader_debug_info_glob') ]
 endif
 
 # Note: Make a copy of the command arguments up to this point for the runtime shader recompilation system as it requires a slightly

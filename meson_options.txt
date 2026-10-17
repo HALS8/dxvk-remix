@@ -56,3 +56,5 @@ option('remixsdk_local', type: 'string', value: '', description: 'Path to the lo
 option('download_apics', type : 'boolean', value : true, description : 'Download APICs for testing')
 
 option('remix_sentry_environment', type : 'string', value : '', description : 'Sentry environment tag baked in at compile time (e.g. github-production, gitlab-production). When empty or not set, the C++ code uses "development". CI should pass -Dremix_sentry_environment=$env:BUILD_SENTRY_ENVIRONMENT.')
+
+option('shader_debug_info_glob', type : 'string', value : '', description : 'Embed source-level debug info, for line-level shader profiling in Nsight Graphics, in the compiled shaders whose name matches this glob (e.g. integrate_indirect*), in any build type. Empty embeds none (debug builds embed it in all). Optimization is unchanged. Debug info for every shader would push the runtime DLL past the 2 GB image limit.')

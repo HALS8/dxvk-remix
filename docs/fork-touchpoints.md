@@ -4904,3 +4904,17 @@ startup is only a baseline, and the option is `NoSave`, so a saved conf can neve
 
 - **`src/dxvk/rtx_render/rtx_nsight_capture.{h,cpp}`** - inline. *The option and its change callback.*
 - **`RtxOptions.md`** - one row added.
+---
+
+## Workstream - Shader debug info in any build type (fork - 2026-10-17)
+
+`-Dshader_debug_info_glob=<glob>` passes `-debug -debugfilter <glob>` to `compile_shaders.py` outside debug
+build types, and `-debug` now gives slangc `-g` as well as glslang, so the matching shaders carry
+source-level debug info. Nsight Graphics' shader profiler can then attribute samples to lines.
+Optimization is unchanged; the runtime targets Vulkan 1.4, where non-semantic shader info is core.
+The glob exists because debug info multiplies shader size several times over and every shader is
+embedded in the DLL: all of them together pass the 2 GB image limit.
+
+- **`meson_options.txt`** - one option.
+- **`meson.build`** - the `-debug` / `-debugfilter` arguments.
+- **`scripts-common/compile_shaders.py`** - `-debugfilter`, and `-g` for slangc under `-debug`; a shader slangc cannot compile with `-g` (it emits invalid SPIR-V for the NRC closest-hit variants) is rebuilt without it, with a message.
