@@ -687,11 +687,19 @@ namespace dxvk {
     constexpr uint32_t kWindowFrames = 600;
     constexpr size_t kMaterialsListed = 8;
     GeometryDiagnostics& diagnostics = m_geometryDiagnostics;
+    diagnostics.lights += m_lightManager.getLightTable().size();
+    diagnostics.externalLights += m_lightManager.getExternalLightTable().size();
+    diagnostics.activeLights += m_lightManager.getActiveCount();
+    diagnostics.mostActiveLights = std::max(diagnostics.mostActiveLights, m_lightManager.getActiveCount());
     if (++diagnostics.frames < kWindowFrames) {
       return;
     }
 
     const auto rate = [&](uint64_t count) { return static_cast<float>(count) / kWindowFrames; };
+
+    Logger::info(str::format("[RTX Lights] per frame over ", kWindowFrames, " frames | light table ", rate(diagnostics.lights),
+                             " external ", rate(diagnostics.externalLights), " active ", rate(diagnostics.activeLights),
+                             " (most ", diagnostics.mostActiveLights, ")"));
 
     std::string rebuilds = str::format("[RTX Geometry] per frame over ", kWindowFrames, " frames | rebuilds:");
     for (uint32_t i = 0; i < static_cast<uint32_t>(RebuildReason::Count); ++i) {

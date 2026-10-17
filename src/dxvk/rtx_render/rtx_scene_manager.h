@@ -348,6 +348,9 @@ private:
     std::array<uint64_t, static_cast<size_t>(HistoryReset::Count)> historyResets {};
     uint64_t relinks = 0;
     std::unordered_map<XXH64_hash_t, MaterialRebuilds> rebuildsByMaterial;
+    // Light table sizes summed over the window's frames, and the largest seen.
+    uint64_t lights = 0, externalLights = 0, activeLights = 0;
+    uint32_t mostActiveLights = 0;
     uint32_t frames = 0;
   };
   void noteRebuild(const DrawCallState& drawCallState, RebuildReason reason);
