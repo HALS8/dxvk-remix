@@ -1024,6 +1024,7 @@ namespace dxvk {
     if (tex == nullptr) {
       return;
     }
+    wake(tex);
 
     if (!async || RtxOptions::TextureManager::neverDowngradeTextures()) {
       tex->m_canDemote = false;
@@ -1090,6 +1091,7 @@ namespace dxvk {
     }
     if (tex->m_refCount++ == 0) {
       m_retainedCount.fetch_add(1, std::memory_order_relaxed);
+      wake(tex);
     }
   }
 
@@ -1226,6 +1228,7 @@ namespace dxvk {
       tex->requestMips(0);
       constexpr bool forceUnload = true; // do not check current mip count
       scheduleTextureLoad(tex, false, forceUnload );
+      wake(tex);
 
       it = m_hotreloadRequests.erase(it); // pop request
     }
@@ -1398,6 +1401,28 @@ namespace dxvk {
     }
   }
 
+  void RtxTextureManager::wake(const Rc<ManagedTexture>& tex) {
+    auto lock = std::unique_lock{ m_awakeMutex };
+    if (!tex->m_awake) {
+      tex->m_awake = true;
+      m_awake.push_back(tex);
+    }
+  }
+
+  // Asleep, a texture keeps what it has: nothing in use, nothing reading it outside feedback, and its
+  // resting mips uploaded (or its load failed). Anything that changes that wakes it again.
+  bool RtxTextureManager::canSleep(const ManagedTexture& tex, uint32_t curframe) const {
+    if (!tex.m_canDemote) {
+      return true;
+    }
+    if (tex.m_refCount > 0 || isUsedOutsideSamplerFeedback(tex, curframe)) {
+      return false;
+    }
+    const ManagedTexture::State state = tex.m_state;
+    return state == ManagedTexture::State::kFailed
+        || (state == ManagedTexture::State::kVidMem && tex.hasUploadedMips(tex.m_requestedMips, true));
+  }
+
   void RtxTextureManager::garbageCollection(const uint32_t* gpuAccessedMips) {
     ScopedCpuProfileZone();
 
@@ -1410,11 +1435,11 @@ namespace dxvk {
     
     static auto prioritylist = std::vector<PriorityTexture>{};
     static auto checkonlyframes = std::vector<ManagedTexture*>{};
+    auto awakeLock = std::unique_lock{ m_awakeMutex };
     {
       prioritylist.clear();
       checkonlyframes.clear();
-      auto ls = std::unique_lock{ m_sf.m_idToTexture_mutex };
-      for (const auto& tex : m_sf.m_idToTexture) {
+      for (const auto& tex : m_awake) {
         assert(tex != nullptr);
         if (tex != nullptr && tex->m_canDemote) {
           if (tex->m_refCount > 0 && tex->m_samplerFeedbackStamp != SAMPLER_FEEDBACK_INVALID && !isUsedOutsideSamplerFeedback(*tex, curframe)) {
@@ -1444,6 +1469,19 @@ namespace dxvk {
       tex->requestMips(tex->m_refCount > 0 || isUsedOutsideSamplerFeedback(*tex, curframe) ? MAX_MIPS : 0);
       scheduleTextureLoad(tex, true);
     }
+
+    // Settled textures leave the awake list; whatever gives one work again wakes it.
+    {
+      auto settled = std::remove_if(m_awake.begin(), m_awake.end(), [&](const Rc<ManagedTexture>& tex) {
+        if (!canSleep(*tex, curframe)) {
+          return false;
+        }
+        tex->m_awake = false;
+        return true;
+      });
+      m_awake.erase(settled, m_awake.end());
+    }
+    awakeLock.unlock();
 
     
     // For sampler-feedback textures, make a list, so that the low priority textures are at the end.
@@ -1645,6 +1683,8 @@ namespace dxvk {
         texture->m_samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID;
       }
     }
+
+    wake(texture);
 
     {
       FileWatch::get().watchTexture(this, texture);

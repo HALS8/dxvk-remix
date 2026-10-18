@@ -94,6 +94,8 @@ namespace dxvk {
     // Fork: last frame a consumer that sampler feedback cannot see (terrain baker, dome light) used this
     // texture. Feedback never reports those reads, so the texture is kept at full mips while this is recent.
     uint32_t            m_frameLastUsedOutsideSamplerFeedback = UINT32_MAX;
+    // Fork: on RtxTextureManager's awake list (guarded by its m_awakeMutex).
+    bool                m_awake = false;
 
   public:
     bool hasUploadedMips(uint32_t requiredMips, bool exact) const;

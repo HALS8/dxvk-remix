@@ -170,6 +170,15 @@ namespace dxvk {
     void scheduleTextureLoad(const Rc<ManagedTexture>& texture, bool async, bool forceUnload = false);
     void updateSamplerFeedback(const Rc<ManagedTexture>& tex, uint16_t associatedFeedbackStamp);
 
+    // Fork: the textures garbageCollection visits -- those in use, or not yet settled at their resting mips.
+    // An unused texture already at its resting mips needs nothing until something uses it again, and a mod
+    // registers tens of thousands of textures, so visiting every one each frame cost several ms. Every path
+    // that can give a texture work to do (registration, retain, addTexture, hot reload) wakes it.
+    void wake(const Rc<ManagedTexture>& tex);
+    bool canSleep(const ManagedTexture& tex, uint32_t curframe) const;
+    dxvk::mutex m_awakeMutex;
+    std::vector<Rc<ManagedTexture>> m_awake;
+
   private:
     struct TextureHashFn {
       size_t operator() (const TextureRef& tex) const {

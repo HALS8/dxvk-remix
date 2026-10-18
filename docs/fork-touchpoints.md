@@ -4944,3 +4944,17 @@ shader writes per instance is unchanged.
 
 - **`src/dxvk/rtx_render/rtx_point_instancer_system.cpp/.h`** - one upload, one table, one dispatch.
 - **`src/dxvk/shaders/rtx/pass/instance_culling/`** - `PointInstancerCullingBatch`, binding 55, `findBatch`.
+
+---
+
+## Workstream - Texture garbage collection visits only awake textures (fork - 2026-10-18)
+
+`RtxTextureManager::garbageCollection` walked every registered texture each frame. A mod registers
+tens of thousands (38,229 here), almost all unused and already at their resting mips, and visiting
+them cost ~5 ms of render-thread CPU per frame (Tracy). The manager now keeps an awake list: a texture
+joins it on registration, retain (0 -> 1), addTexture and hot reload, and leaves once it is unused, not
+read outside sampler feedback, and uploaded at its requested mips (or failed). Measured 6.1 -> 1.0 ms per
+frame with 451 awake. The remaining 0.8 ms is fetchNoisyMipCounts over every sampler-feedback slot.
+
+- **`src/dxvk/rtx_render/rtx_texture_manager.cpp/.h`** - `wake`, `canSleep`, `m_awake`; GC iterates it.
+- **`src/dxvk/rtx_render/rtx_texture.h`** - `ManagedTexture::m_awake`.
