@@ -100,6 +100,7 @@ namespace fork_hooks {
     replacementInstance.frameLastSeen = device.getCurrentFrameId();
     replacementInstance.categoryFlags = drawCall.getCategoryFlags().raw();
     replacementInstance.isSkinned = drawCall.getSkinningState().numBones > 0;
+    replacementInstance.isAlphaBlended = drawCall.isAlphaBlended();
   }
 
   void externalDrawReleaseReplacementInstance(ReplacementInstance& replacementInstance) {

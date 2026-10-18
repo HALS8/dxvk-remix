@@ -417,6 +417,8 @@ namespace dxvk {
           // Skinned and player model objects should always be GC'd when stale —
           // anti-culling them produces frozen poses or wrong positions.
           // Objects tagged IgnoreAntiCulling by the game config are also exempt.
+          // Alpha-blended draws are exempt too (rtx.antiCulling.object.exemptAlphaBlended): they are effects the
+          // game retires and replaces constantly, so kept outside the frustum they pile up for the whole session.
           // Translation-animated objects (transform changed in their last update)
           // are also exempt: anti-culling them freezes them mid-motion at the
           // last-seen position, which is rarely the right answer for a moving
@@ -431,6 +433,7 @@ namespace dxvk {
               replacementInstance->isSkinned ||
               categories.test(InstanceCategories::ThirdPersonPlayerModel) ||
               categories.test(InstanceCategories::IgnoreAntiCulling) ||
+              (replacementInstance->isAlphaBlended && RtxOptions::AntiCulling::Object::exemptAlphaBlended()) ||
               wasMovingWhenLastSeen;
 
           // Object anti-culling: keep objects that are OUTSIDE the camera frustum.

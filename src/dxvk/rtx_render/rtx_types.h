@@ -213,6 +213,7 @@ struct ReplacementInstance {
   // Stored as raw bits because CategoryFlags is defined later in this file.
   uint32_t categoryFlags = 0;
   bool isSkinned = false;
+  bool isAlphaBlended = false;
 
   // When true, the aggregate object-space bounding boxes (geometryBoundingBox,
   // lightBoundingBox) will be recomputed from the replacement mesh/light data
@@ -826,6 +827,10 @@ struct DrawCallState {
 
   template<typename... InstanceCategories>
   bool testCategoryFlags(InstanceCategories... cat) const { return categories.any(cat...); }
+
+  // Whether the draw composites over what is behind it: blending enabled, not the ONE/ZERO opaque alias, and not
+  // forced to a cutout. Such draws are effects (smoke, sprites, fades) the game retires and replaces constantly.
+  bool isAlphaBlended() const;
 
   void printDebugInfo(const char* name = "") const {
 #ifdef REMIX_DEVELOPMENT

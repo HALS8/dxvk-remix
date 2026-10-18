@@ -368,6 +368,14 @@ namespace dxvk {
     }
   }
 
+  bool DrawCallState::isAlphaBlended() const {
+    const auto& blend = getMaterialData().blendMode;
+    if (!blend.enableBlending || testCategoryFlags(InstanceCategories::AlphaBlendToCutout)) {
+      return false;
+    }
+    return !(blend.colorSrcFactor == VK_BLEND_FACTOR_ONE && blend.colorDstFactor == VK_BLEND_FACTOR_ZERO);
+  }
+
   void DrawCallState::setCategory(InstanceCategories category, bool doSet) {
     if (doSet && !suppressedCategories.test(category)) {
       categories.set(category);

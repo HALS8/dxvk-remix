@@ -4918,3 +4918,15 @@ embedded in the DLL: all of them together pass the 2 GB image limit.
 - **`meson_options.txt`** - one option.
 - **`meson.build`** - the `-debug` / `-debugfilter` arguments.
 - **`scripts-common/compile_shaders.py`** - `-debugfilter`, and `-g` for slangc under `-debug`; a shader slangc cannot compile with `-g` (it emits invalid SPIR-V for the NRC closest-hit variants) is rebuilt without it, with a message.
+
+## Workstream - Anti-culling never keeps alpha-blended draws (fork - 2026-10-18)
+
+`rtx.antiCulling.object.exemptAlphaBlended` (default on) adds alpha-blended draws to the anti-culling GC
+exemptions. A game that retires and replaces effect batches (chimney smoke) otherwise leaves every retired
+batch that drifted outside the frustum alive for the whole session; all of them stay in the alpha-blend ray
+mask and every visibility ray steps through them in software (measured: frame time 17 -> 100 ms episodes).
+
+- **`rtx_types.h/.cpp`** - `DrawCallState::isAlphaBlended()`; `ReplacementInstance::isAlphaBlended`.
+- **`rtx_scene_manager.cpp`, `rtx_fork_submit.cpp`** - set it where `isSkinned` is set.
+- **`rtx_draw_call_tracker.cpp`** - the exemption.
+- **`rtx_options.h`, `RtxOptions.md`** - the option.

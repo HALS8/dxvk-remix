@@ -1034,6 +1034,7 @@ namespace dxvk {
     replacementInstance->frameLastSeen = currentFrameId;
     replacementInstance->categoryFlags = liveInput.getCategoryFlags().raw();
     replacementInstance->isSkinned = liveInput.getSkinningState().numBones > 0;
+    replacementInstance->isAlphaBlended = liveInput.isAlphaBlended();
 
     // Cache this submission's texture-coordinate projection so that next frame's
     // computeDirtyFlags can detect drift. Writing here (after either path has run)

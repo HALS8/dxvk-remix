@@ -691,6 +691,10 @@ namespace dxvk {
                    "Typically, it's advisable to enable this option unless it results in a notable performance drop; otherwise, the presence of flickering artifacts could significantly diminish the overall image quality.");
         RTX_OPTION("rtx.antiCulling.object", bool, enableInfinityFarFrustum, false, "Enable infinity far plane frustum for anti-culling.");
         RTX_OPTION("rtx.antiCulling.object", bool, hashInstanceWithBoundingBoxHash, true, "Hash instances with bounding box hash for object duplication check.\n Disable this when the game using primitive culling which may cause flickering.");
+        RTX_OPTION("rtx.antiCulling.object", bool, exemptAlphaBlended, true,
+                   "Never extend the lifetime of alpha-blended draws (smoke, sprites, fading objects). Games retire and\n"
+                   "replace such effects constantly; kept alive outside the frustum they accumulate for the whole session,\n"
+                   "and every visibility ray crossing them evaluates them in software.");
         // TODO: This should be a threshold of memory size
         RTX_OPTION("rtx.antiCulling.object", uint32_t, numObjectsToKeep, 10000, "The maximum number of RayTracing instances to keep when Anti-Culling is enabled.");
         RTX_OPTION("rtx.antiCulling.object", float, fovScale, 1.0f, "Scale applied to the FOV of Anti-Culling Frustum for matching the culling frustum in the original game.");
