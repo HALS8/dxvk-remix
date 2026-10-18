@@ -30,7 +30,11 @@
 layout(binding = POINT_INSTANCER_CULLING_BINDING_CONSTANTS)
 ConstantBuffer<PointInstancerCullingConstants> cb;
 
-// Input: all instance-to-object transforms (float4x4, column-major)
+// Input: every batch, ordered by firstTransform
+layout(binding = POINT_INSTANCER_CULLING_BINDING_BATCHES)
+StructuredBuffer<PointInstancerCullingBatch> batches;
+
+// Input: every batch's instance-to-object transforms, back to back (float4x4, column-major)
 layout(binding = POINT_INSTANCER_CULLING_BINDING_TRANSFORMS_INPUT)
 StructuredBuffer<float4x4> inputTransforms;
 

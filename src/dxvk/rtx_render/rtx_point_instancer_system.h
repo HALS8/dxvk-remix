@@ -145,6 +145,11 @@ namespace dxvk {
     // -- GPU resources ------------------------------------------------------
 
     Rc<DxvkBuffer> m_cb;            // Per-dispatch constant buffer
-    Rc<DxvkBuffer> m_transformsGpu; // Reused upload buffer for input transforms
+    Rc<DxvkBuffer> m_transformsGpu; // Every batch's input transforms, back to back
+    Rc<DxvkBuffer> m_batchesGpu;    // One PointInstancerCullingBatch per batch
+    std::vector<Matrix4> m_transformsCpu;                  // Staging for m_transformsGpu, kept to reuse its allocation
+    std::vector<PointInstancerCullingBatch> m_batchTable;  // Staging for m_batchesGpu
+
+    void ensureStorageBuffer(Rc<DxvkBuffer>& buffer, size_t size, const char* name);
   };
 }

@@ -39,22 +39,40 @@
 // Size of VkAccelerationStructureInstanceKHR in bytes
 static const uint kVkAccelInstanceSize = 64;
 
+// The batch holding transform `transformIdx`: the last whose firstTransform is not past it.
+uint findBatch(uint transformIdx) {
+  uint low = 0;
+  uint high = cb.batchCount - 1;
+  while (low < high) {
+    const uint middle = (low + high + 1) / 2;
+    if (batches[middle].firstTransform <= transformIdx) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main(uint3 threadId : SV_DispatchThreadID) {
-  uint instanceIdx = threadId.x;
-  if (instanceIdx >= cb.totalInstanceCount) {
+  const uint transformIdx = threadId.x;
+  if (transformIdx >= cb.totalTransformCount) {
     return;
   }
 
+  const PointInstancerCullingBatch batch = batches[findBatch(transformIdx)];
+  const uint instanceIdx = transformIdx - batch.firstTransform;
+
   // Read the instance-to-object transform (column-major float4x4)
-  float4x4 instanceToObject = inputTransforms[instanceIdx];
+  float4x4 instanceToObject = inputTransforms[transformIdx];
 
   // Compute the combined object-to-world * instance-to-object transform.
   // The translation column (col 3) gives us the world-space origin directly.
   // Note: In HLSL/Slang, matrix[i] returns ROW i, not column i.
   // Translation lives in column 3, accessed as (row0.w, row1.w, row2.w).
-  float4x4 fullTransform = mul(cb.objectToWorld, instanceToObject);
+  float4x4 fullTransform = mul(batch.objectToWorld, instanceToObject);
   float3 worldPos = float3(fullTransform[0].w, fullTransform[1].w, fullTransform[2].w);
 
   // Squared-distance cull (avoid sqrt in the common rejection case)
@@ -79,7 +97,7 @@ void main(uint3 threadId : SV_DispatchThreadID) {
     }
   }
 
-  uint mask = visible ? cb.instanceMask : 0;
+  uint mask = visible ? batch.instanceMask : 0;
 
   // === Per-instance surface data: copy template and patch transforms ===
 
@@ -87,21 +105,21 @@ void main(uint3 threadId : SV_DispatchThreadID) {
   // Copy the template surface, then patch per-instance transforms using
   // the Surface struct properties so that any future layout changes are
   // reflected here automatically.
-  Surface surface = surfaceBuffer[cb.baseSurfaceIndex];
+  Surface surface = surfaceBuffer[batch.baseSurfaceIndex];
 
-  float4x4 prevFull = mul(cb.prevObjectToWorld, instanceToObject);
+  float4x4 prevFull = mul(batch.prevObjectToWorld, instanceToObject);
   float3x3 normalMat = transpose(inverse((float3x3)fullTransform));
 
   surface.objectToWorld       = (mat4x3)fullTransform;
   surface.prevObjectToWorld   = (mat4x3)prevFull;
   surface.normalObjectToWorld = normalMat;
 
-  surfaceBuffer[cb.baseSurfaceIndex + instanceIdx] = surface;
+  surfaceBuffer[batch.baseSurfaceIndex + instanceIdx] = surface;
 
   // === Per-instance material data: copy template ===
   // Material data is identical for all instances of a PointInstancer;
   // this is a plain struct copy from the template slot.
-  materialBuffer[cb.baseSurfaceIndex + instanceIdx] = materialBuffer[cb.baseSurfaceIndex];
+  materialBuffer[batch.baseSurfaceIndex + instanceIdx] = materialBuffer[batch.baseSurfaceIndex];
 
   // === Write VkAccelerationStructureInstanceKHR unconditionally ===
 
@@ -110,7 +128,7 @@ void main(uint3 threadId : SV_DispatchThreadID) {
   //   Row 0 = fullTransform[0] = (r00, r01, r02, tx)
   //   Row 1 = fullTransform[1] = (r10, r11, r12, ty)
   //   Row 2 = fullTransform[2] = (r20, r21, r22, tz)
-  uint byteOffset = cb.instanceBufferOffset + instanceIdx * kVkAccelInstanceSize;
+  uint byteOffset = batch.instanceBufferOffset + instanceIdx * kVkAccelInstanceSize;
 
   // Row 0
   instanceBuffer.Store(byteOffset +  0, asuint(fullTransform[0].x));
@@ -129,14 +147,14 @@ void main(uint3 threadId : SV_DispatchThreadID) {
   instanceBuffer.Store(byteOffset + 44, asuint(fullTransform[2].w));
 
   // instanceCustomIndex:24 | mask:8 — each instance gets its own surface index
-  uint perInstanceSurfaceIndex = cb.baseSurfaceIndex + instanceIdx;
-  uint customIndexAndMask = (cb.customIndexFlags | (perInstanceSurfaceIndex & CUSTOM_INDEX_SURFACE_MASK)) | (mask << 24);
+  uint perInstanceSurfaceIndex = batch.baseSurfaceIndex + instanceIdx;
+  uint customIndexAndMask = (batch.customIndexFlags | (perInstanceSurfaceIndex & CUSTOM_INDEX_SURFACE_MASK)) | (mask << 24);
   instanceBuffer.Store(byteOffset + 48, customIndexAndMask);
 
   // instanceShaderBindingTableRecordOffset:24 | flags:8
-  instanceBuffer.Store(byteOffset + 52, cb.sbtOffsetAndFlags);
+  instanceBuffer.Store(byteOffset + 52, batch.sbtOffsetAndFlags);
 
   // accelerationStructureReference (uint64LE)
-  instanceBuffer.Store(byteOffset + 56, cb.blasRefLo);
-  instanceBuffer.Store(byteOffset + 60, cb.blasRefHi);
+  instanceBuffer.Store(byteOffset + 56, batch.blasRefLo);
+  instanceBuffer.Store(byteOffset + 60, batch.blasRefHi);
 }

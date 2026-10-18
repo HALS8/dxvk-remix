@@ -24,14 +24,13 @@
 #include "rtx/pass/common_binding_indices.h"
 #include "rtx/utility/shader_types.h"
 
-struct PointInstancerCullingConstants {
+// One PointInstancer: its transforms are inputTransforms[firstTransform, firstTransform + instanceCount).
+struct PointInstancerCullingBatch {
   mat4 objectToWorld;         // Column-major object-to-world matrix for this instancer
   mat4 prevObjectToWorld;     // Column-major previous-frame object-to-world (for motion vectors)
-  vec3 cameraPosition;
-  float cullingRadius;        // Maximum distance from camera before culling
-  uint totalInstanceCount;    // Number of input transforms
+  uint firstTransform;        // Index of this batch's first transform in inputTransforms
+  uint instanceCount;         // Number of input transforms
   uint baseSurfaceIndex;      // surfaceIndexOfFirstInstance for instanceCustomIndex
-  float fadeStartRadius;      // Distance at which density starts reducing (0 = no fade)
   uint customIndexFlags;      // Upper bits of instanceCustomIndex (material type, view model flag)
   uint instanceMask;          // 8-bit visibility mask for this instance
   uint sbtOffsetAndFlags;     // Packed: instanceShaderBindingTableRecordOffset:24 | flags:8
@@ -43,11 +42,21 @@ struct PointInstancerCullingConstants {
   uint pad2;
 };
 
+struct PointInstancerCullingConstants {
+  vec3 cameraPosition;
+  float cullingRadius;        // Maximum distance from camera before culling
+  float fadeStartRadius;      // Distance at which density starts reducing (0 = no fade)
+  uint batchCount;
+  uint totalTransformCount;   // Sum of every batch's instanceCount: one thread each
+  uint pad0;
+};
+
 #define POINT_INSTANCER_CULLING_BINDING_CONSTANTS         50
 #define POINT_INSTANCER_CULLING_BINDING_TRANSFORMS_INPUT  51
 #define POINT_INSTANCER_CULLING_BINDING_INSTANCE_BUFFER   52
 #define POINT_INSTANCER_CULLING_BINDING_SURFACE_BUFFER    53
 #define POINT_INSTANCER_CULLING_BINDING_MATERIAL_BUFFER   54
+#define POINT_INSTANCER_CULLING_BINDING_BATCHES           55
 
 #define POINT_INSTANCER_CULLING_MIN_BINDING  POINT_INSTANCER_CULLING_BINDING_CONSTANTS
 

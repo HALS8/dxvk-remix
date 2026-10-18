@@ -4930,3 +4930,17 @@ mask and every visibility ray steps through them in software (measured: frame ti
 - **`rtx_scene_manager.cpp`, `rtx_fork_submit.cpp`** - set it where `isSkinned` is set.
 - **`rtx_draw_call_tracker.cpp`** - the exemption.
 - **`rtx_options.h`, `RtxOptions.md`** - the option.
+
+---
+
+## Workstream - Point instancer culling in one dispatch (fork - 2026-10-18)
+
+`RtxPointInstancerSystem::dispatchCulling` dispatched the culling shader once per batch, rewriting one
+upload buffer each time, so every dispatch waited for the one before it to finish reading, plus the
+per-dispatch CPU setup. With ~390 instanced meshes that was 3.8 ms of CPU on the render thread per
+frame (Tracy, 2026-10-18). Now every batch's transforms go up in one buffer with a table of where each
+batch starts, and one dispatch covers them all; each thread finds its batch by binary search. What the
+shader writes per instance is unchanged.
+
+- **`src/dxvk/rtx_render/rtx_point_instancer_system.cpp/.h`** - one upload, one table, one dispatch.
+- **`src/dxvk/shaders/rtx/pass/instance_culling/`** - `PointInstancerCullingBatch`, binding 55, `findBatch`.
