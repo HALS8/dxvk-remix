@@ -56,12 +56,31 @@ namespace dxvk {
     m_hashIgnoredFloatConstants = std::move(merged);
   }
 
+  namespace {
+    // How many consecutive registers a matrix macro reads from its second operand: one per
+    // component of its result (dxso_compiler.cpp, emitMatrixAlu). 0 for every other opcode.
+    uint32_t matrixRows(DxsoOpcode opcode) {
+      switch (opcode) {
+      case DxsoOpcode::M3x2: return 2;
+      case DxsoOpcode::M3x3: return 3;
+      case DxsoOpcode::M4x3: return 3;
+      case DxsoOpcode::M3x4: return 4;
+      case DxsoOpcode::M4x4: return 4;
+      default: return 0;
+      }
+    }
+  }
+
   // The float registers a vertex shader can read on the way to an output vertex capture records --
-  // position, normal and first texcoord -- found by walking back from those outputs through every
+  // position, normal, first texcoord and first colour (dxso_compiler.cpp, emitVertexCaptureWrite
+  // callers) -- found by walking back from those outputs through every
   // instruction that writes a register already known to feed them. The walk ignores instruction
   // order and branches, so it can only ever include too much: a temporary reused for lighting and
   // for position pulls in both. A constant read with relative addressing (a bone palette) brings in
   // the whole constant-table entry it indexes, or every register above it when the table names none.
+  //
+  // Leaving out a register that does feed an output is the one failure that matters: the hash then
+  // misses a change, and the draw keeps a capture made with the old value -- drawn where it was.
   std::vector<bool> D3D9CommonShader::FindCapturedOutputConstants(
       const DxsoCtab& ctab, const std::vector<DxsoInstructionContext>& code) const {
     const uint32_t registerCount = caps::MaxFloatConstantsVS;
@@ -77,13 +96,15 @@ namespace dxvk {
         if (ins.instruction.opcode == DxsoOpcode::Dcl && ins.dst.id.type == DxsoRegisterType::Output
             && (semantic.usage == DxsoUsage::Position || semantic.usage == DxsoUsage::PositionT
                 || semantic.usage == DxsoUsage::Normal
-                || (semantic.usage == DxsoUsage::Texcoord && semantic.usageIndex == 0))) {
+                || (semantic.usage == DxsoUsage::Texcoord && semantic.usageIndex == 0)
+                || (semantic.usage == DxsoUsage::Color && semantic.usageIndex == 0))) {
           live.insert(key(ins.dst.id));
         }
       }
     } else {
       live.insert(key({ DxsoRegisterType::RasterizerOut, RasterOutPosition }));
       live.insert(key({ DxsoRegisterType::TexcoordOut, 0 }));
+      live.insert(key({ DxsoRegisterType::AttributeOut, 0 }));
     }
 
     const auto floatIndex = [](const DxsoRegisterId& id) -> int64_t {
@@ -143,6 +164,13 @@ namespace dxvk {
         }
         for (uint32_t i = 0; i < std::min<uint32_t>(ins.srcCount, DxsoMaxOperandCount); ++i) {
           read(ins.src[i]);
+        }
+        // A matrix macro names only the first row of its matrix operand and reads the rows after it.
+        const uint32_t rows = matrixRows(opcode);
+        for (uint32_t row = 1; row < rows && ins.srcCount > 1; ++row) {
+          DxsoRegister next = ins.src[1];
+          next.id.num += row;
+          read(next);
         }
         if (ins.instruction.predicated) {
           read(ins.pred);
