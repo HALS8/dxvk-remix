@@ -1040,6 +1040,10 @@ std::unique_ptr<dxvk::ExternalDrawState> dxvk::RemixAPIPrivateAccessor::toRtDraw
     prototype.materialData.albedoTintMask = bySecondary ? AlbedoTintMask::SecondaryAlpha : AlbedoTintMask::AlbedoAlpha;
   }
 
+  if (pnext::find<remixapi_InstanceInfoTerrainLayerReceiverEXT>(&info)) {
+    prototype.terrainLayer.receiver = true;
+  }
+
   if (auto extParticles = pnext::find<remixapi_InstanceInfoParticleSystemEXT>(&info)) {
     state->optionalParticleDesc.emplace(convert::toRtParticleDesc(*extParticles));
   }

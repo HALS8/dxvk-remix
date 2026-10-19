@@ -18,8 +18,18 @@ namespace dxvk {
     // that tile exactly do not spill into their neighbours' cells.
     constexpr float kFootprintInset = 1e-3f;
 
-    XXH64_hash_t transformKey(const Matrix4& objectToWorld) {
-      return XXH3_64bits(&objectToWorld, sizeof(objectToWorld));
+    // A chunk is its transform and its facing: a floor and a ceiling under one transform are two.
+    XXH64_hash_t chunkKey(const Matrix4& objectToWorld, TerrainLayerDraw::Facing facing) {
+      return XXH3_64bits_withSeed(&objectToWorld, sizeof(objectToWorld), static_cast<XXH64_hash_t>(facing));
+    }
+
+    // The shaders' reading of a facing: 0 either, 1 up, -1 down.
+    float facingSign(TerrainLayerDraw::Facing facing) {
+      switch (facing) {
+      case TerrainLayerDraw::Facing::Floor: return 1.f;
+      case TerrainLayerDraw::Facing::Ceiling: return -1.f;
+      default: return 0.f;
+      }
     }
 
     // The world axis a direction mostly points along.
@@ -55,8 +65,8 @@ namespace dxvk {
     }
   }
 
-  TerrainLayers::Chunk* TerrainLayers::ChunkSet::findOrAdd(const Matrix4& objectToWorld, size_t maxChunks) {
-    const XXH64_hash_t key = transformKey(objectToWorld);
+  TerrainLayers::Chunk* TerrainLayers::ChunkSet::findOrAdd(const Matrix4& objectToWorld, TerrainLayerDraw::Facing facing, size_t maxChunks) {
+    const XXH64_hash_t key = chunkKey(objectToWorld, facing);
 
     const auto found = indexByTransform.find(key);
     if (found != indexByTransform.end()) {
@@ -70,6 +80,7 @@ namespace dxvk {
     indexByTransform.emplace(key, chunks.size());
     Chunk& chunk = chunks.emplace_back();
     chunk.objectToWorld = objectToWorld;
+    chunk.facing = facing;
     return &chunk;
   }
 
@@ -168,7 +179,7 @@ namespace dxvk {
 
     // The layer limit is checked first, so a chunk is never added without a layer.
     Chunk* chunk = set.layerCount < (retained ? kMaxRetainedLayers : kMaxFrameLayers)
-      ? set.findOrAdd(objectToWorld, retained ? kMaxRetainedChunks : kMaxFrameChunks)
+      ? set.findOrAdd(objectToWorld, layerDraw.facing, retained ? kMaxRetainedChunks : kMaxFrameChunks)
       : nullptr;
     if (chunk == nullptr) {
       m_statistics.droppedLayers++;
@@ -191,8 +202,8 @@ namespace dxvk {
     }
   }
 
-  void TerrainLayers::releaseChunk(const Matrix4& objectToWorld) {
-    const auto found = m_retained.indexByTransform.find(transformKey(objectToWorld));
+  void TerrainLayers::releaseChunk(const Matrix4& objectToWorld, TerrainLayerDraw::Facing facing) {
+    const auto found = m_retained.indexByTransform.find(chunkKey(objectToWorld, facing));
     if (found == m_retained.indexByTransform.end()) {
       return;
     }
@@ -204,7 +215,7 @@ namespace dxvk {
 
     if (index != chunks.size() - 1) {
       chunks[index] = std::move(chunks.back());
-      m_retained.indexByTransform[transformKey(chunks[index].objectToWorld)] = index;
+      m_retained.indexByTransform[chunkKey(chunks[index].objectToWorld, chunks[index].facing)] = index;
     }
     chunks.pop_back();
   }
@@ -329,7 +340,7 @@ namespace dxvk {
                               worldToObject[2].data[row], worldToObject[3].data[row]);
       }
       texels[3] = Vector4(first.projectionOrigin.x, first.projectionOrigin.y, first.projectionOrigin.z, first.maskScale);
-      texels[4] = Vector4(number(layerNumber), number(static_cast<uint32_t>(chunk.layers.size())), 0.f, 0.f);
+      texels[4] = Vector4(number(layerNumber), number(static_cast<uint32_t>(chunk.layers.size())), facingSign(chunk.facing), 0.f);
 
       for (const Layer& layer : chunk.layers) {
         // A layer whose mask is not resident yet is left covering nothing rather than everything.

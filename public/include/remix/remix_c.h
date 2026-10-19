@@ -81,9 +81,14 @@
 // PATCH 5 added a tint mask texture: remixapi_MaterialInfoGameTexturesEXT::tintMaskTexture,
 // remixapi_InstanceInfoAlbedoTintEXT::maskByTintMaskTexture and
 // REMIXAPI_D3D9_ALBEDO_TINT_MASKED_BY_SECONDARY_ALPHA.
+//
+// PATCH 6 added terrain layer facing (REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR / _CEILING), so a
+// dual-heightmap chunk's floor and ceiling keep separate layers, and
+// remixapi_InstanceInfoTerrainLayerReceiverEXT, which makes an API instance a terrain layer
+// receiver.
 #define REMIXAPI_VERSION_MAJOR 0
 #define REMIXAPI_VERSION_MINOR 1000
-#define REMIXAPI_VERSION_PATCH 5
+#define REMIXAPI_VERSION_PATCH 6
 
 
 // External
@@ -160,6 +165,7 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO                   = 28,
     REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_GAME_TEXTURES_EXT      = 29,
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_ALBEDO_TINT_EXT        = 30,
+    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_TERRAIN_LAYER_RECEIVER_EXT = 31,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -519,6 +525,16 @@ extern "C" {
     remixapi_Bool                  maskByTintMaskTexture;
   } remixapi_InstanceInfoAlbedoTintEXT;
 
+  // Makes the instance a terrain layer receiver, as REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER makes a
+  // D3D9 draw one: where it lies over a described terrain layer chunk, its surface is evaluated
+  // from the chunk's layers; elsewhere it keeps its own material. A chunk described with a facing
+  // only serves hits whose surface faces the same way (REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR /
+  // _CEILING). Since 0.1000.6.
+  typedef struct remixapi_InstanceInfoTerrainLayerReceiverEXT {
+    remixapi_StructType            sType;
+    void*                          pNext;
+  } remixapi_InstanceInfoTerrainLayerReceiverEXT;
+
   // Bit values match upstream NVIDIA dxvk-remix exactly. These are a published
   // ABI contract — do NOT reorder or reassign. (An earlier fork build shifted
   // IGNORE_ALPHA_CHANNEL to bit 8 to mirror the internal InstanceCategories
@@ -665,6 +681,12 @@ extern "C" {
   //                chunk over: layers already retained for the chunk are dropped first. Set on
   //                the first layer of a chunk, describing it again cannot leave old layers behind.
   //   bits 16-23   alpha reference: coverage not greater than this (out of 255) is no coverage
+  //   bit  24      REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR: the chunk is a floor -- it serves only hits
+  //                whose surface faces up. A chunk is keyed by its world transform and facing, so
+  //                a floor and a ceiling under the same transform are separate chunks.
+  //   bit  25      REMIXAPI_D3D9_TERRAIN_LAYER_CEILING: the chunk is a ceiling, serving only hits
+  //                whose surface faces down. With neither bit the chunk serves either facing.
+  //                RELEASE drops the chunk with the facing it names.
   //
   // The projected position is (object-space position + origin), with the origin given as three
   // IEEE-754 float bit patterns in REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X/Y/Z. The mask is
@@ -702,11 +724,14 @@ extern "C" {
   #define REMIXAPI_D3D9_TERRAIN_LAYER_RECEIVER 0x4000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE 0x8000u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_ALPHA_REFERENCE_SHIFT 16u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR 0x1000000u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_CEILING 0x2000000u
 
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY 0x1u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED 0x2u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER 0x4u
   #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE 0x8u
+  #define REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_FACING 0x10u
 
 
   typedef struct remixapi_AnimatedFloat1D {

@@ -632,6 +632,14 @@ struct TerrainLayerDraw {
   bool replace = false;
   // Not a layer: geometry whose surface is evaluated from the layers of the chunk it lies over.
   bool receiver = false;
+  // Which hits the layer's chunk serves, by the way the hit surface faces: a dual-heightmap
+  // chunk's floor and ceiling share a transform but not their layers. Part of the chunk's key.
+  enum class Facing : uint8_t {
+    Either = 0,
+    Floor,
+    Ceiling
+  };
+  Facing facing = Facing::Either;
   Projection projection = Projection::XZ;
   bool colorAlphaInCoverage = false;
   // Coverage not greater than this is no coverage.

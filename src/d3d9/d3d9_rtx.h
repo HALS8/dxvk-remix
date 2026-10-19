@@ -340,6 +340,7 @@ namespace dxvk {
     // Records a description-only terrain layer draw without submitting its geometry. False when
     // the draw is not one, or cannot be read as a layer.
     bool emitTerrainLayerDescription();
+    static TerrainLayerDraw::Facing terrainLayerFacing(uint32_t description);
 
     Rc<DxvkSampler> getStageSampler(uint32_t stage);
 

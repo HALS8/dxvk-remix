@@ -106,7 +106,8 @@ struct TerrainArgs {
 //     0-2  rows of the world-to-object transform
 //     3    xyz: added to the object-space position before a colour projection
 //          w: object-space XZ position times this is the mask texcoord, 0..1 over the chunk
-//     4    x: number of the chunk's first layer, y: its layer count
+//     4    x: number of the chunk's first layer, y: its layer count, z: the facing of the hits it
+//          serves -- 1 up (a floor), -1 down (a ceiling), 0 either
 //   Layers, from layerOffset, kTerrainLayerTexels each. Texture and sampler indices are
 //   BINDING_INDEX_INVALID where a layer has no such texture:
 //     0    xyz: U of the colour texcoord, w: colour texture

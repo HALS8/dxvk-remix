@@ -4958,3 +4958,21 @@ frame with 451 awake. The remaining 0.8 ms is fetchNoisyMipCounts over every sam
 
 - **`src/dxvk/rtx_render/rtx_texture_manager.cpp/.h`** - `wake`, `canSleep`, `m_awake`; GC iterates it.
 - **`src/dxvk/rtx_render/rtx_texture.h`** - `ManagedTexture::m_awake`.
+
+---
+
+## Workstream - Terrain layer facing and API receivers (fork - 2026-10-19, API 0.1000.6)
+
+A dual-heightmap landblock has a floor and a ceiling under one transform, each with its own layers,
+and the chunk lookup is two-dimensional, so a ceiling hit read the floor's layers. A chunk is now keyed
+by transform and facing (`REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR` / `_CEILING`; neither serves both, as
+before), and the shader skips a chunk whose facing disagrees with the hit's viewer-facing normal. And
+`remixapi_InstanceInfoTerrainLayerReceiverEXT` makes an API instance a receiver, so terrain drawn
+through the API is evaluated from retained chunks like a D3D9 receiver draw.
+
+- **`public/include/remix/remix_c.h`** - facing bits, `FEATURE_FACING`, the receiver extension, PATCH 6.
+- **`src/dxvk/rtx_render/rtx_types.h`** - `TerrainLayerDraw::Facing`.
+- **`src/d3d9/d3d9_rtx.cpp/.h`** - `terrainLayerFacing`; release names a facing.
+- **`src/dxvk/rtx_render/rtx_terrain_layers.cpp/.h`** - `chunkKey`, `Chunk::facing`, table texel 4.z.
+- **`src/dxvk/shaders/rtx/concept/surface_material/terrain_layers.slangh`** - facing test in `terrainLayersFindChunk`.
+- **`src/dxvk/rtx_render/rtx_remix_api.cpp`, `rtx_remix_specialization.inl`** - receiver extension.

@@ -73,10 +73,11 @@ namespace dxvk {
       uint32_t heightTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     };
 
-    // The layers sharing one object-to-world transform, in submission order: the order the game
-    // composites them in.
+    // The layers sharing one object-to-world transform and facing, in submission order: the order
+    // the game composites them in.
     struct Chunk {
       Matrix4 objectToWorld;
+      TerrainLayerDraw::Facing facing = TerrainLayerDraw::Facing::Either;
       std::vector<Layer> layers;
     };
 
@@ -108,9 +109,9 @@ namespace dxvk {
     void addLayer(RtxContext& ctx, const TerrainLayerDraw& layer, const Matrix4& objectToWorld);
 
     /**
-      * \brief: Drops the retained chunk with the given transform, if there is one.
+      * \brief: Drops the retained chunk with the given transform and facing, if there is one.
       */
-    void releaseChunk(const Matrix4& objectToWorld);
+    void releaseChunk(const Matrix4& objectToWorld, TerrainLayerDraw::Facing facing);
 
     /**
       * \brief: Tracks the retained layers' textures for this frame and writes the table the
@@ -144,13 +145,13 @@ namespace dxvk {
       uint32_t crowdedCells = 0;
     };
 
-    // Chunks keyed by their transform.
+    // Chunks keyed by their transform and facing.
     struct ChunkSet {
       std::vector<Chunk> chunks;
       std::unordered_map<XXH64_hash_t, size_t> indexByTransform;
       uint32_t layerCount = 0;
 
-      Chunk* findOrAdd(const Matrix4& objectToWorld, size_t maxChunks);
+      Chunk* findOrAdd(const Matrix4& objectToWorld, TerrainLayerDraw::Facing facing, size_t maxChunks);
       void clear();
     };
 

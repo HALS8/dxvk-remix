@@ -147,13 +147,18 @@ vec4 terrainLayerSample(uint textureIndex, uint samplerIndex, TerrainLayerTexcoo
 
 // Finds the chunk a world position lies over, among the few the position's grid cell names.
 // A chunk covers 0..1 of its mask.
-bool terrainLayersFindChunk(vec3 position, out TerrainLayerChunk chunk, out vec3 objectPosition, out vec2 maskTexcoord)
+// The first chunk over the position that serves a surface facing this way. A dual-heightmap chunk's
+// floor and ceiling share a footprint; the surface's normal, turned towards the viewer, says which
+// of the two a hit is on.
+bool terrainLayersFindChunk(vec3 position, vec3 facingNormal, out TerrainLayerChunk chunk, out vec3 objectPosition, out vec2 maskTexcoord)
 {
   objectPosition = vec3(0);
   maskTexcoord = vec2(0);
 
   const uint axis0 = cb.terrainLayerArgs.gridAxes & 0x3;
   const uint axis1 = (cb.terrainLayerArgs.gridAxes >> 2) & 0x3;
+  const uint upAxis = 3 - axis0 - axis1;
+  const float hitFacing = facingNormal[upAxis] >= 0.0 ? 1.0 : -1.0;
   const vec2 cell = floor(
     (vec2(position[axis0], position[axis1]) - cb.terrainLayerArgs.gridOrigin) / cb.terrainLayerArgs.gridCellSize);
   if (any(cell < 0.0) || cell.x >= float(cb.terrainLayerArgs.gridWidth) || cell.y >= float(cb.terrainLayerArgs.gridHeight))
@@ -181,9 +186,9 @@ bool terrainLayersFindChunk(vec3 position, out TerrainLayerChunk chunk, out vec3
     const vec3 candidate = terrainLayerChunkPoint(chunk, position);
     const vec2 texcoord = candidate.xz * chunk.maskScale;
 
-    if (all(texcoord >= 0.0) && all(texcoord <= 1.0))
+    const vec4 range = terrainLayerTableRead(texel + 4);
+    if (all(texcoord >= 0.0) && all(texcoord <= 1.0) && (range.z == 0.0 || range.z == hitFacing))
     {
-      const vec4 range = terrainLayerTableRead(texel + 4);
       chunk.firstLayer = uint(range.x);
       chunk.layerCount = uint(range.y);
       objectPosition = candidate;
@@ -220,7 +225,7 @@ TerrainLayerBlend terrainLayersEvaluate(SurfaceInteraction surfaceInteraction, M
   TerrainLayerChunk chunk;
   vec3 objectPosition;
   vec2 maskTexcoord;
-  if (!terrainLayersFindChunk(surfaceInteraction.position, chunk, objectPosition, maskTexcoord))
+  if (!terrainLayersFindChunk(surfaceInteraction.position, surfaceInteraction.geometryNormal, chunk, objectPosition, maskTexcoord))
   {
     return blend;
   }

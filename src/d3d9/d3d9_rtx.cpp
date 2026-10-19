@@ -1005,9 +1005,17 @@ namespace dxvk {
       return REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_DESCRIPTION_ONLY |
              REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RETAINED |
              REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_RECEIVER |
-             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE;
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_REPLACE |
+             REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_FACING;
     }
     return m_terrainLayerStates[state - REMIXAPI_D3D9_RS_TERRAIN_LAYER];
+  }
+
+  TerrainLayerDraw::Facing D3D9Rtx::terrainLayerFacing(uint32_t description) {
+    if (description & REMIXAPI_D3D9_TERRAIN_LAYER_CEILING) {
+      return TerrainLayerDraw::Facing::Ceiling;
+    }
+    return (description & REMIXAPI_D3D9_TERRAIN_LAYER_FLOOR) ? TerrainLayerDraw::Facing::Floor : TerrainLayerDraw::Facing::Either;
   }
 
   bool D3D9Rtx::emitTerrainLayerDescription() {
@@ -1016,8 +1024,9 @@ namespace dxvk {
     }
 
     if (m_terrainLayerStates[0] & REMIXAPI_D3D9_TERRAIN_LAYER_RELEASE) {
-      m_parent->EmitCs([cObjectToWorld = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)]](DxvkContext* ctx) {
-        static_cast<RtxContext*>(ctx)->getSceneManager().getTerrainLayers().releaseChunk(cObjectToWorld);
+      m_parent->EmitCs([cObjectToWorld = d3d9State().transforms[GetTransformIndex(D3DTS_WORLD)],
+                        cFacing = terrainLayerFacing(m_terrainLayerStates[0])](DxvkContext* ctx) {
+        static_cast<RtxContext*>(ctx)->getSceneManager().getTerrainLayers().releaseChunk(cObjectToWorld, cFacing);
       });
       return true;
     }
@@ -1113,6 +1122,7 @@ namespace dxvk {
                                      floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Z));
     layer.maskScale = floatState(REMIXAPI_D3D9_RS_TERRAIN_LAYER_MASK_SCALE);
     layer.retained = description & REMIXAPI_D3D9_TERRAIN_LAYER_RETAINED;
+    layer.facing = terrainLayerFacing(description);
     layer.replace = description & REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE;
     layer.enabled = true;
   }
