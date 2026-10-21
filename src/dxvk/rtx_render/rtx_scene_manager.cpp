@@ -2115,7 +2115,7 @@ namespace dxvk {
       surfaceMaterial.emplace(opaqueSurfaceMaterial);
     } else if (renderMaterialDataType == MaterialDataType::Translucent) {
       surfaceMaterial.emplace(createTranslucentSurfaceMaterial(renderMaterialData.getTranslucentMaterialData(), samplerIndex, hasTexcoords,
-                                                               drawCallState.getMaterialData().waterNormalLayers));
+                                                               drawCallState.getMaterialData().waterBody));
     } else if (renderMaterialDataType == MaterialDataType::RayPortal) {
       const auto& rayPortalMaterialData = renderMaterialData.getRayPortalMaterialData();
 
@@ -2153,7 +2153,7 @@ namespace dxvk {
   RtTranslucentSurfaceMaterial SceneManager::createTranslucentSurfaceMaterial(const TranslucentMaterialData& translucentMaterialData,
                                                                               uint32_t samplerIndex,
                                                                               bool hasTexcoords,
-                                                                              const WaterNormalLayers& waterNormalLayers) {
+                                                                              const WaterBody& waterBody) {
     uint32_t normalTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t transmittanceTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t emissiveColorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
@@ -2169,7 +2169,7 @@ namespace dxvk {
       emissiveColorTextureIndex,
       translucentMaterialData.getRefractiveIndex() * std::clamp(TranslucentMaterialOptions::refractiveIndexScale(), 0.0f, 3.0f),
       translucentMaterialData.getTransmittanceMeasurementDistance(),
-      translucentMaterialData.getTransmittanceColor(),
+      waterBody.hasTransmittance() ? waterBody.transmittanceColor() : translucentMaterialData.getTransmittanceColor(),
       translucentMaterialData.getEnableEmission(),
       translucentMaterialData.getEmissiveIntensity() * RtxOptions::emissiveIntensity(),
       translucentMaterialData.getEmissiveColorConstant(),
@@ -2178,7 +2178,7 @@ namespace dxvk {
       translucentMaterialData.getEnableDiffuseLayer(),
       samplerIndex,
       samplerFeedbackStamp,
-      waterNormalLayers
+      waterBody
     };
   }
 

@@ -1049,15 +1049,25 @@ private:
   uint32_t m_cachedDLSSControlMask;
 };
 
-// A water body's normal layers, see REMIXAPI_D3D9_RS_WATER_LAYER0 in remix_c.h. Layer i samples the
-// normal map at the hit's horizontal world position times frequency[i], plus time times velocity[i].
-struct WaterNormalLayers {
+// A water body as a game describes it, see REMIXAPI_D3D9_RS_WATER_* in remix_c.h. Normal layer i
+// samples the normal map at the hit's horizontal world position times frequency[i], plus time times
+// velocity[i]; transmittance, when its alpha is not 0, replaces the material's transmittance colour.
+struct WaterBody {
   static constexpr uint32_t kCount = 3;
   Vector2 velocity[kCount] = {};
   float frequency[kCount] = {};
+  uint32_t transmittance = 0;   // D3DCOLOR
 
-  bool any() const {
+  bool hasNormalLayers() const {
     return frequency[0] != 0.f || frequency[1] != 0.f || frequency[2] != 0.f;
+  }
+
+  bool hasTransmittance() const {
+    return (transmittance >> 24) != 0;
+  }
+
+  Vector3 transmittanceColor() const {
+    return Vector3(float((transmittance >> 16) & 0xFF), float((transmittance >> 8) & 0xFF), float(transmittance & 0xFF)) / 255.f;
   }
 };
 
@@ -1070,7 +1080,7 @@ struct RtTranslucentSurfaceMaterial {
     float transmittanceMeasurementDistance, const Vector3& transmittanceColor,
     bool enableEmission, float emissiveIntensity, const Vector3& emissiveColorConstant,
     bool isThinWalled, float thinWallThickness, bool useDiffuseLayer, uint32_t samplerIndex,
-    uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID, const WaterNormalLayers& waterNormalLayers = {}) :
+    uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID, const WaterBody& waterBody = {}) :
     m_normalTextureIndex(normalTextureIndex),
     m_transmittanceTextureIndex(transmittanceTextureIndex),
     m_emissiveColorTextureIndex(emissiveColorTextureIndex),
@@ -1078,7 +1088,7 @@ struct RtTranslucentSurfaceMaterial {
     m_transmittanceMeasurementDistance(transmittanceMeasurementDistance), m_transmittanceColor(transmittanceColor),
     m_enableEmission(enableEmission), m_emissiveIntensity(emissiveIntensity), m_emissiveColorConstant(emissiveColorConstant),
     m_isThinWalled(isThinWalled), m_thinWallThickness(thinWallThickness), m_useDiffuseLayer(useDiffuseLayer), m_samplerIndex(samplerIndex),
-    m_samplerFeedbackStamp(samplerFeedbackStamp), m_waterNormalLayers(waterNormalLayers)
+    m_samplerFeedbackStamp(samplerFeedbackStamp), m_waterBody(waterBody)
   {
     updateCachedData();
     updateCachedHash();
@@ -1097,7 +1107,7 @@ struct RtTranslucentSurfaceMaterial {
       flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_USE_DIFFUSE_LAYER;
     }
 
-    if (m_waterNormalLayers.any()) {
+    if (m_waterBody.hasNormalLayers()) {
       flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS;
       if (getZUp()) {
         flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP;
@@ -1141,10 +1151,10 @@ struct RtTranslucentSurfaceMaterial {
     writeGPUHelperExplicit<2>(data, offset, m_samplerFeedbackStamp);
 
     // data[18 - 26]: water normal layers, velocity u, velocity v, frequency each
-    for (uint32_t i = 0; i < WaterNormalLayers::kCount; ++i) {
-      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterNormalLayers.velocity[i].x));
-      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterNormalLayers.velocity[i].y));
-      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterNormalLayers.frequency[i]));
+    for (uint32_t i = 0; i < WaterBody::kCount; ++i) {
+      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterBody.velocity[i].x));
+      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterBody.velocity[i].y));
+      writeGPUHelper(data, offset, glm::packHalf1x16(m_waterBody.frequency[i]));
     }
 
     // data[27 - 31]
@@ -1179,7 +1189,7 @@ struct RtTranslucentSurfaceMaterial {
 private:
   void updateCachedHash() {
     static_assert(
-      sizeof(*this) == 128,
+      sizeof(*this) == 136,
       "add new member for hashing if needed: add a MEMBER into the struct + add a VALUE into the list-init"
     );
     struct HashStruct {
@@ -1197,7 +1207,7 @@ private:
       uint32_t useDiffuseLayer; // NOTE: uint32_t to avoid padding
       uint32_t samplerIndex;
       uint32_t samplerFeedbackStamp; // NOTE: uint32_t to avoid padding
-      WaterNormalLayers waterNormalLayers;
+      WaterBody waterBody;
       // NOTE: There must be NO padding between members, as the struct is used for hashing
     };
     static_assert(alignof(HashStruct) == 4 && sizeof(HashStruct) % 4 == 0);
@@ -1216,7 +1226,7 @@ private:
       m_useDiffuseLayer,
       m_samplerIndex,
       m_samplerFeedbackStamp,
-      m_waterNormalLayers,
+      m_waterBody,
     };
     m_cachedHash = XXH3_64bits(&hashData, sizeof(hashData));
   }
@@ -1257,7 +1267,7 @@ private:
   float m_thinWallThickness;
   bool m_useDiffuseLayer;
   uint16_t m_samplerFeedbackStamp;
-  WaterNormalLayers m_waterNormalLayers;
+  WaterBody m_waterBody;
 
   XXH64_hash_t m_cachedHash;
 
@@ -2002,7 +2012,7 @@ struct LegacyMaterialData {
   // replacements are keyed by: the same albedo keeps its replacement under any layer.
   TextureRef colorLayerTexture;
   // Set from REMIXAPI_D3D9_RS_WATER_*, see remix_c.h; applies to a translucent material.
-  WaterNormalLayers waterNormalLayers;
+  WaterBody waterBody;
 
   void setHashOverride(XXH64_hash_t hash) {
     m_cachedHash = hash;

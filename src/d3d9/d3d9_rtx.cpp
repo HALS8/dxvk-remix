@@ -1146,7 +1146,7 @@ namespace dxvk {
   }
 
   bool D3D9Rtx::IsWaterState(uint32_t state) {
-    static_assert(REMIXAPI_D3D9_RS_WATER_FREQUENCY2 - REMIXAPI_D3D9_RS_WATER_LAYER0 + 1 == kWaterStateCount);
+    static_assert(REMIXAPI_D3D9_RS_WATER_TRANSMITTANCE - REMIXAPI_D3D9_RS_WATER_LAYER0 + 1 == kWaterStateCount);
     return state - REMIXAPI_D3D9_RS_WATER_LAYER0 < kWaterStateCount;
   }
 
@@ -1159,14 +1159,15 @@ namespace dxvk {
   }
 
   void D3D9Rtx::setWaterState() {
-    WaterNormalLayers& layers = m_activeDrawCallState.materialData.waterNormalLayers;
+    WaterBody& layers = m_activeDrawCallState.materialData.waterBody;
     const glm::vec2 frequency01 = glm::unpackHalf2x16(m_waterStates[3]);
     const float frequency[] = { frequency01.x, frequency01.y, glm::unpackHalf2x16(m_waterStates[4]).x };
-    for (uint32_t i = 0; i < WaterNormalLayers::kCount; ++i) {
+    for (uint32_t i = 0; i < WaterBody::kCount; ++i) {
       const glm::vec2 velocity = glm::unpackHalf2x16(m_waterStates[i]);
       layers.velocity[i] = Vector2(velocity.x, velocity.y);
       layers.frequency[i] = frequency[i];
     }
+    layers.transmittance = m_waterStates[5];
   }
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {

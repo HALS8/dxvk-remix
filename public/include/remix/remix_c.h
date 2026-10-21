@@ -741,12 +741,19 @@ extern "C" {
   //   REMIXAPI_D3D9_RS_WATER_FREQUENCY2:   frequency of layer 2, unused
   //
   // A layer with frequency 0 is not sampled; all frequencies 0 (the default) keeps the global
-  // animation. Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  // animation.
+  //
+  //   REMIXAPI_D3D9_RS_WATER_TRANSMITTANCE: a D3DCOLOR replacing the translucent material's
+  //     transmittance colour (gamma encoded, like the material's), so each body has its own tint.
+  //     An alpha of 0 (the default) keeps the material's.
+  //
+  // Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
   #define REMIXAPI_D3D9_RS_WATER_LAYER0 0x5258430Bu
   #define REMIXAPI_D3D9_RS_WATER_LAYER1 0x5258430Cu
   #define REMIXAPI_D3D9_RS_WATER_LAYER2 0x5258430Du
   #define REMIXAPI_D3D9_RS_WATER_FREQUENCY01 0x5258430Eu
   #define REMIXAPI_D3D9_RS_WATER_FREQUENCY2 0x5258430Fu
+  #define REMIXAPI_D3D9_RS_WATER_TRANSMITTANCE 0x52584310u
 
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
