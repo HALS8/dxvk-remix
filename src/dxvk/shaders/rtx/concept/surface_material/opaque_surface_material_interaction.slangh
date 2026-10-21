@@ -683,6 +683,19 @@ OpaqueSurfaceMaterialInteraction opaqueSurfaceMaterialInteractionCreate(
     thinFilmThickness = opaqueSurfaceMaterial.thinFilmThicknessConstant;
   }
 
+  // A second colour layer multiplies colour and coverage, both in the textures' own space.
+  if (albedoOpacityLoaded && surface.hasColorLayer)
+  {
+    const vec2 albedoCoordinates = surfaceInteraction.textureCoordinates;
+    surfaceInteraction.textureCoordinates = mul(float3(albedoCoordinates, 1.0f), surface.colorLayerTransform);
+    vec4 layerSample;
+    if (surfaceMaterialInteractionTextureReadHelper(opaqueSurfaceMaterial.colorLayerTextureIndex, opaqueSurfaceMaterial.samplerIndex, surfaceInteraction, layerSample, materialLodBias))
+    {
+      albedoOpacitySample *= layerSample;
+    }
+    surfaceInteraction.textureCoordinates = albedoCoordinates;
+  }
+
   if (albedoOpacityLoaded)
   {
     albedo = albedoOpacitySample.rgb;

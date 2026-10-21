@@ -700,6 +700,28 @@ extern "C" {
   // REMIXAPI_D3D9_TERRAIN_LAYER_FEATURE_* bits this runtime honours, and setting it does nothing.
   //
   // Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  // D3D9 per-draw second colour layer.
+  //
+  // Some games give a surface two colour-and-opacity textures and multiply them in a pixel shader
+  // that Remix does not run: a banner whose torn edge is in the second texture, or froth whose two
+  // layers scroll against each other. A caller that knows this binds the second texture to a
+  // texture stage and sets this render state to 1 + that stage. The following draws then get
+  //
+  //   uv2      = (uv, 1) * rows 0-2 of D3DTS_TEXTUREn (n the stage), as D3D9 applies a 2D transform
+  //   albedo  *= layer.rgb
+  //   opacity *= layer.a
+  //
+  // where uv is the albedo's texture coordinate after the albedo's own texture transform, and layer
+  // the second texture sampled at uv2 with the albedo's sampler, in the textures' own (gamma)
+  // space. The matrix is read whatever D3DTSS_TEXTURETRANSFORMFLAGS says on that stage. 0 turns it
+  // off. A replacement material keeps the layer. Same lifetime and detection rules as
+  // REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  //
+  //   device->SetTexture(3, layerTexture);
+  //   device->SetTransform(D3DTS_TEXTURE3, &layerFromAlbedoCoordinates);
+  //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_COLOR_LAYER, 1 + 3);
+  #define REMIXAPI_D3D9_RS_COLOR_LAYER 0x5258430Au
+
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y 0x52584306u

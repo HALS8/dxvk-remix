@@ -483,6 +483,7 @@ namespace {
           preloadTexture(preload.subsurfaceSingleScatteringAlbedoTexture),
           preloadTexture(preload.subsurfaceRadiusTexture),
           TextureRef(),
+          TextureRef(),
           src.getAnisotropyConstant(),
           src.getEmissiveIntensity(),
           src.getAlbedoConstant(),
@@ -575,6 +576,7 @@ namespace {
         // Upstream introduced these fields at 0.6.5; on the Remix Plus ABI line that is 0.1000.1.
         const bool hasDlssControlMask = s_apiVersion >= REMIXAPI_VERSION_MAKE(0, 1000, 1);
         return MaterialData { OpaqueMaterialData {
+          {},
           {},
           {},
           {},

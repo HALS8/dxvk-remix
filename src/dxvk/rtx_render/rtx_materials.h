@@ -285,7 +285,10 @@ struct RtSurface {
 
     static_assert(static_cast<uint32_t>(TexGenMode::Count) <= 4);
     textureFlags |= ((static_cast<uint32_t>(texgenMode) & 0x3) << 17);
-    // textureFlags bits 19-30 unused
+    // An eye keeps its origin where the layer transform goes, so it has no layer.
+    const bool writeColorLayer = hasColorLayer && !eyeParams;
+    textureFlags |= writeColorLayer ? (1 << 19) : 0;
+    // textureFlags bits 20-30 unused
 
     writeGPUHelper(data, offset, textureFlags);
 
@@ -299,6 +302,12 @@ struct RtSurface {
       writeGPUHelper(data, offset, eyeParams->eyeballOrigin.x);
       writeGPUHelper(data, offset, eyeParams->eyeballOrigin.y);
       writeGPUHelper(data, offset, eyeParams->eyeballOrigin.z);
+    } else if (writeColorLayer) {
+      // Rows u and v of the 2x3 affine transform, as half pairs: (u.x, u.y), (u.z, v.x), (v.y, v.z).
+      const Matrix4& m = colorLayerTransform;
+      writeGPUHelper(data, offset, glm::packHalf2x16(glm::vec2(m.data[0].x, m.data[1].x)));
+      writeGPUHelper(data, offset, glm::packHalf2x16(glm::vec2(m.data[2].x, m.data[0].y)));
+      writeGPUHelper(data, offset, glm::packHalf2x16(glm::vec2(m.data[1].y, m.data[2].y)));
     } else {
       writeGPUHelper(data, offset, uint32_t{});
       writeGPUHelper(data, offset, uint32_t{});
@@ -351,6 +360,10 @@ struct RtSurface {
   bool skipSurfaceInteractionSpritesheetAdjustment = false;
   // Terrain without layers of its own, evaluated from the terrain layer chunk it lies over.
   bool isTerrainLayerReceiver = false;
+  // The material's colour layer is sampled at colorLayerTransform applied to the albedo's
+  // coordinates. See REMIXAPI_D3D9_RS_COLOR_LAYER.
+  bool hasColorLayer = false;
+  Matrix4 colorLayerTransform;
 
   RtTextureArgSource textureColorArg1Source = RtTextureArgSource::Texture;
   RtTextureArgSource textureColorArg2Source = RtTextureArgSource::None;
@@ -596,7 +609,8 @@ struct RtOpaqueSurfaceMaterial {
     uint16_t samplerFeedbackStamp,
     uint32_t secondaryTextureIndex = 0,
     bool albedoTextureIsSrgb = false, bool emissiveTextureIsSrgb = false,
-    bool skyLitParticle = false, bool usesLegacyDefaults = false
+    bool skyLitParticle = false, bool usesLegacyDefaults = false,
+    uint32_t colorLayerTextureIndex = kSurfaceMaterialInvalidTextureIndex
   ) :
     m_albedoOpacityTextureIndex{ albedoOpacityTextureIndex }, m_secondaryTextureIndex{secondaryTextureIndex}, m_normalTextureIndex{ normalTextureIndex },
     m_tangentTextureIndex { tangentTextureIndex }, m_heightTextureIndex { heightTextureIndex }, m_roughnessTextureIndex{ roughnessTextureIndex },
@@ -615,7 +629,8 @@ struct RtOpaqueSurfaceMaterial {
     m_subsurfaceMaterialIndex(subsurfaceMaterialIndex), m_isRaytracedRenderTarget(isRaytracedRenderTarget),
     m_isHairCard(isHairCard), m_samplerFeedbackStamp{ samplerFeedbackStamp },
     m_albedoTextureIsSrgb{ albedoTextureIsSrgb }, m_emissiveTextureIsSrgb{ emissiveTextureIsSrgb },
-    m_skyLitParticle{ skyLitParticle }, m_usesLegacyDefaults{ usesLegacyDefaults }
+    m_skyLitParticle{ skyLitParticle }, m_usesLegacyDefaults{ usesLegacyDefaults },
+    m_colorLayerTextureIndex{ colorLayerTextureIndex }
   {
     updateCachedData();
     updateCachedHash();
@@ -729,7 +744,7 @@ struct RtOpaqueSurfaceMaterial {
 
     // data[26]
     writeGPUHelperExplicit<2>(data, offset, m_samplerFeedbackStamp);
-    writeGPUPadding<2>(data, offset);
+    writeGPUHelperExplicit<2>(data, offset, m_colorLayerTextureIndex);
 
     writeGPUHelper(data, offset, m_cachedDLSSControlMask);
 
@@ -838,6 +853,7 @@ struct RtOpaqueSurfaceMaterial {
   void forEachTextureIndex(Fn&& fn) const {
     fn(m_albedoOpacityTextureIndex);
     fn(m_secondaryTextureIndex);
+    fn(m_colorLayerTextureIndex);
     fn(m_normalTextureIndex);
     fn(m_tangentTextureIndex);
     fn(m_heightTextureIndex);
@@ -884,6 +900,7 @@ private:
       uint32_t emissiveTextureIsSrgb;     // NOTE: uint32_t to avoid padding
       uint32_t skyLitParticle;            // NOTE: uint32_t to avoid padding
       uint32_t usesLegacyDefaults;
+      uint32_t colorLayerTextureIndex;
       // NOTE: There must be NO padding between members, as the struct is used for hashing
     };
     HashStruct hashData = HashStruct{
@@ -918,6 +935,7 @@ private:
       m_emissiveTextureIsSrgb,
       m_skyLitParticle,
       m_usesLegacyDefaults,
+      m_colorLayerTextureIndex,
     };
     m_cachedHash = hashStructByMemory<HashStruct,
       &HashStruct::albedoOpacityTextureIndex,
@@ -950,7 +968,8 @@ private:
       &HashStruct::albedoTextureIsSrgb,
       &HashStruct::emissiveTextureIsSrgb,
       &HashStruct::skyLitParticle,
-      &HashStruct::usesLegacyDefaults>(hashData);
+      &HashStruct::usesLegacyDefaults,
+      &HashStruct::colorLayerTextureIndex>(hashData);
   }
 
   void updateCachedData() {
@@ -1018,6 +1037,8 @@ private:
   bool m_usesLegacyDefaults;
 
   uint16_t m_samplerFeedbackStamp;
+  // The second colour layer's texture, see REMIXAPI_D3D9_RS_COLOR_LAYER.
+  uint32_t m_colorLayerTextureIndex;
 
   XXH64_hash_t m_cachedHash;
 
@@ -1947,6 +1968,9 @@ struct LegacyMaterialData {
   // Set from REMIXAPI_D3D9_RS_ALBEDO_TINT or remixapi_InstanceInfoAlbedoTintEXT, see remix_c.h.
   AlbedoTintMask albedoTintMask = AlbedoTintMask::None;
   bool isVertexColorBakedLighting = true;
+  // Set from REMIXAPI_D3D9_RS_COLOR_LAYER, see remix_c.h. Not part of the material hash, which
+  // replacements are keyed by: the same albedo keeps its replacement under any layer.
+  TextureRef colorLayerTexture;
 
   void setHashOverride(XXH64_hash_t hash) {
     m_cachedHash = hash;
@@ -2141,6 +2165,7 @@ public:
         if (input.albedoTintMask == AlbedoTintMask::SecondaryAlpha) {
           tmp.getSecondaryTexture() = input.getColorTexture2();
         }
+        tmp.getColorLayerTexture() = input.colorLayerTexture;
         if (auto s = input.getSampler().ptr()) {
           tmp.getFilterMode() = lss::Mdl::Filter::vkToMdl(s->info().magFilter);
           tmp.getWrapModeU() = lss::Mdl::WrapMode::vkToMdl(s->info().addressModeU);

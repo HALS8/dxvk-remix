@@ -137,6 +137,7 @@ struct ReplacementInstance {
     // so they don't churn dirty flags.
     Matrix4 textureTransform = Matrix4();
     TexGenMode texgenMode = TexGenMode::None;
+    Matrix4 colorLayerTransform = Matrix4();
   };
 
   ReplacementInstance() = delete;
@@ -250,6 +251,7 @@ struct ReplacementInstance {
   // RtSurface state. See LookupKey for the dirty-flag rationale.
   Matrix4 textureTransform;
   TexGenMode texgenMode = TexGenMode::None;
+  Matrix4 colorLayerTransform;
 
   // Gates preserve vs dynamic dispatch and (future) split updaters. See DirtyFlag
   // and kLookupDriftMask / kDynamicFeatureMask for clear semantics.
@@ -595,6 +597,9 @@ struct DrawCallTransforms {
   Matrix4 worldToView = Matrix4();
   Matrix4 viewToProjection = Matrix4();
   Matrix4 textureTransform = Matrix4();
+  // The second colour layer's coordinates from the albedo's (after textureTransform), see
+  // REMIXAPI_D3D9_RS_COLOR_LAYER. Read only when the material has a colour layer texture.
+  Matrix4 colorLayerTransform = Matrix4();
   bool enableClipPlane = false;
   Vector4 clipPlane{ 0.f };
   TexGenMode texgenMode = TexGenMode::None;

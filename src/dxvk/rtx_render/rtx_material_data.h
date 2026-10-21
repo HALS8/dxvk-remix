@@ -45,7 +45,8 @@
   X(SubsurfaceThicknessTexture,              subsurface_thickness_texture,         TextureRef, void, void, {}) \
   X(SubsurfaceSingleScatteringAlbedoTexture, subsurface_single_scattering_texture, TextureRef, void, void, {}) \
   X(SubsurfaceRadiusTexture,                 subsurface_radius_texture,            TextureRef, void, void, {}) \
-  X(SecondaryTexture,                        secondary_texture,                    TextureRef, void, void, {})
+  X(SecondaryTexture,                        secondary_texture,                    TextureRef, void, void, {}) \
+  X(ColorLayerTexture,                       color_layer_texture,                  TextureRef, void, void, {})
 
 
 #define LIST_OPAQUE_MATERIAL_CONSTANTS(X) \

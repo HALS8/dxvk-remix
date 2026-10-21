@@ -34,6 +34,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   struct LegacyMaterialIdentityHashData {
     XXH64_hash_t colorTextureHash0;
     XXH64_hash_t colorTextureHash1;
+    XXH64_hash_t colorLayerTextureHash;
     XXH64_hash_t samplerHash0;
     XXH64_hash_t samplerHash1;
     uint32_t alphaTestCompareOp;
@@ -62,6 +63,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   LegacyMaterialIdentityHashData data{};
   data.colorTextureHash0 = colorTextures[0].getImageHash();
   data.colorTextureHash1 = colorTextures[1].getImageHash();
+  data.colorLayerTextureHash = colorLayerTexture.getImageHash();
   data.samplerHash0 = samplers[0].ptr() != nullptr ? samplers[0]->info().calculateHash() : kEmptyHash;
   data.samplerHash1 = samplers[1].ptr() != nullptr ? samplers[1]->info().calculateHash() : kEmptyHash;
   data.alphaTestCompareOp = static_cast<uint32_t>(alphaTestCompareOp);
@@ -88,6 +90,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   return hashStructByMemory<LegacyMaterialIdentityHashData,
       &LegacyMaterialIdentityHashData::colorTextureHash0,
       &LegacyMaterialIdentityHashData::colorTextureHash1,
+      &LegacyMaterialIdentityHashData::colorLayerTextureHash,
       &LegacyMaterialIdentityHashData::samplerHash0,
       &LegacyMaterialIdentityHashData::samplerHash1,
       &LegacyMaterialIdentityHashData::alphaTestCompareOp,
@@ -159,6 +162,9 @@ template<> OpaqueMaterialData LegacyMaterialData::as() const {
   }
   if (getColorTexture2().isValid()) {
     opaqueMat.setSecondaryTexture(getColorTexture2());
+  }
+  if (colorLayerTexture.isValid()) {
+    opaqueMat.setColorLayerTexture(colorLayerTexture);
   }
   // Indicate that we have an exact sampler to use on this material, directly from game
   if (getSampler().ptr()) {

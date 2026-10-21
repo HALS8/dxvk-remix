@@ -1062,6 +1062,7 @@ namespace dxvk {
     {
       useOpacityMicromap &= !instance.isAnimated() || OpacityMicromapOptions::BuildRequests::enableAnimatedInstances();
       useOpacityMicromap &= !alphaState.isParticle || OpacityMicromapOptions::BuildRequests::enableParticles();
+      useOpacityMicromap &= !instance.surface.hasColorLayer;
     }
 
     // Check if it needs per uTriangle opacity data

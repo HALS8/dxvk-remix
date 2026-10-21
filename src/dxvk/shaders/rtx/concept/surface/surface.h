@@ -471,6 +471,26 @@ struct Surface
     set { data13.z = newValue ? packedFlagSet(data13.z, 1 << 14) : packedFlagUnset(data13.z, 1 << 14); }
   }
 
+  // Whether the material's colour layer applies; colorLayerTransform is then valid.
+  property bool hasColorLayer
+  {
+    get { return packedFlagGet(data13.z, 1 << 19); }
+    set { data13.z = newValue ? packedFlagSet(data13.z, 1 << 19) : packedFlagUnset(data13.z, 1 << 19); }
+  }
+
+  // The colour layer's coordinates as rows u and v of a 2x3 affine transform of the albedo's
+  // coordinates. Aliased with eyeOrigin: an eye has no colour layer.
+  property float3x2 colorLayerTransform
+  {
+    get
+    {
+      const float2 a = unpackFloat2x16(data15.x);
+      const float2 b = unpackFloat2x16(data15.y);
+      const float2 c = unpackFloat2x16(data15.z);
+      return float3x2(a.x, b.y, a.y, c.x, b.x, c.y);
+    }
+  }
+
   property uint8_t albedoTintMask
   {
     get { return uint8_t((data13.z >> 15) & 0x3); }

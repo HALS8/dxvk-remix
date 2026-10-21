@@ -52,6 +52,7 @@ namespace dxvk {
     // force the dynamic path until the preserve path can refresh those fields. Bundle
     // into the catch-all Other bit so usePreservePath's isClear() check fails.
     if (std::memcmp(&ri->textureTransform, &key.textureTransform, sizeof(Matrix4)) != 0 ||
+        std::memcmp(&ri->colorLayerTransform, &key.colorLayerTransform, sizeof(Matrix4)) != 0 ||
         ri->texgenMode != key.texgenMode) {
       ri->dirtyFlags.set(ReplacementInstance::DirtyFlag::Other);
     }
@@ -299,7 +300,8 @@ namespace dxvk {
       drawCallState.getGeometryData().boundingBox.getTransformedCentroid(objectToWorld),
       objectToWorld,
       drawCallState.getTransformData().textureTransform,
-      drawCallState.getTransformData().texgenMode
+      drawCallState.getTransformData().texgenMode,
+      drawCallState.getTransformData().colorLayerTransform
     };
 
     ReplacementInstance* result = findOrCreateReplacementInstance(key);

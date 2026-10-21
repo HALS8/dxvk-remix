@@ -252,6 +252,18 @@ namespace dxvk {
     }
 
     /**
+      * \brief: Sets the stage holding following draw calls' second colour layer, plus one -- the
+      *         REMIXAPI_D3D9_RS_COLOR_LAYER render state, see remix_c.h. 0 is none.
+      */
+    void SetColorLayer(uint32_t value) {
+      m_colorLayer = value;
+    }
+
+    uint32_t GetColorLayer() const {
+      return m_colorLayer;
+    }
+
+    /**
       * rief: Whether a render state is one of the REMIXAPI_D3D9_RS_TERRAIN_LAYER* states,
       *         see remix_c.h.
       */
@@ -327,6 +339,7 @@ namespace dxvk {
     uint32_t m_forcedCategoryBits = 0;
     CategoryFlags m_forcedCategories = 0;
     uint32_t m_albedoTint = 0;
+    uint32_t m_colorLayer = 0;
     AlbedoTintMask m_albedoTintMask = AlbedoTintMask::None;
 
     // REMIXAPI_D3D9_RS_TERRAIN_LAYER and the states after it, in their numeric order.
@@ -336,6 +349,7 @@ namespace dxvk {
     // Describes the active draw call as a terrain layer from m_terrainLayerStates and the
     // texture stages they name.
     void setTerrainLayerState();
+    void setColorLayerState();
 
     // Records a description-only terrain layer draw without submitting its geometry. False when
     // the draw is not one, or cannot be read as a layer.

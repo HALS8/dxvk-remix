@@ -156,7 +156,7 @@ namespace dxvk {
   namespace {
     template<int RtInstanceSize> struct CheckRtInstanceSize {
       // The second line of the build error should contain the new size of RtInstance in the template argument, i.e. `dxvk::CheckRtInstanceSize<newSize>`
-      static_assert(RtInstanceSize == 776, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
+      static_assert(RtInstanceSize == 848, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
     };
     CheckRtInstanceSize<sizeof(RtInstance)> _rtInstanceSizeTest;
   }
@@ -1189,6 +1189,9 @@ namespace dxvk {
         }
 
         currentInstance.surface.textureTransform = drawCall.getTransformData().textureTransform;
+        currentInstance.surface.hasColorLayer = materialData->getType() == MaterialDataType::Opaque &&
+          materialData->getOpaqueMaterialData().getColorLayerTexture().isValid();
+        currentInstance.surface.colorLayerTransform = drawCall.getTransformData().colorLayerTransform;
 
         currentInstance.surface.isStatic = !(hasTransformChanged || hasPreviousPositions) || currentInstance.m_materialType == MaterialDataType::RayPortal;
 

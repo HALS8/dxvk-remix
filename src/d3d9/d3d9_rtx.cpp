@@ -907,6 +907,7 @@ namespace dxvk {
     if (!processRenderState()) {
       return prepareFlagsForIgnoredDraws;
     }
+    setColorLayerState();
 
     // Max offseted index value within a buffer slice that geoData contains
     const uint32_t maxOffsetedIndex = maxIndex - minIndex;
@@ -1125,6 +1126,22 @@ namespace dxvk {
     layer.facing = terrainLayerFacing(description);
     layer.replace = description & REMIXAPI_D3D9_TERRAIN_LAYER_REPLACE;
     layer.enabled = true;
+  }
+
+  void D3D9Rtx::setColorLayerState() {
+    m_activeDrawCallState.materialData.colorLayerTexture = {};
+    m_activeDrawCallState.transformData.colorLayerTransform = Matrix4();
+    const uint32_t stage = m_colorLayer - 1;
+    if (m_colorLayer == 0 || stage >= caps::TextureStageCount || d3d9State().textures[stage] == nullptr) {
+      return;
+    }
+    D3D9CommonTexture* texture = GetCommonTexture(d3d9State().textures[stage]);
+    if (texture->GetType() != D3DRTYPE_TEXTURE) {
+      return;
+    }
+    const bool srgb = d3d9State().samplerStates[stage][D3DSAMP_SRGBTEXTURE] & 0x1;
+    m_activeDrawCallState.materialData.colorLayerTexture = TextureRef(texture->GetSampleView(srgb));
+    m_activeDrawCallState.transformData.colorLayerTransform = d3d9State().transforms[GetTransformIndex(D3DTS_TEXTURE0) + stage];
   }
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {

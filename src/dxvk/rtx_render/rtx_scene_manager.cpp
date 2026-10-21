@@ -1041,6 +1041,7 @@ namespace dxvk {
     // mirrors how objectToWorld is updated downstream of the dirty-flag check.
     replacementInstance->textureTransform = liveInput.getTransformData().textureTransform;
     replacementInstance->texgenMode = liveInput.getTransformData().texgenMode;
+    replacementInstance->colorLayerTransform = liveInput.getTransformData().colorLayerTransform;
 
     // For standalone draw calls, store the object-space bounding box for anti-culling.
     // For replacement draw calls, the aggregate AABB is computed inside drawReplacements.
@@ -1942,6 +1943,7 @@ namespace dxvk {
     if (renderMaterialDataType == MaterialDataType::Opaque || drawCallState.isUsingRaytracedRenderTarget) {
       uint32_t albedoOpacityTextureIndex = kSurfaceMaterialInvalidTextureIndex;
       uint32_t secondaryTextureIndex = kSurfaceMaterialInvalidTextureIndex;
+      uint32_t colorLayerTextureIndex = kSurfaceMaterialInvalidTextureIndex;
       uint32_t normalTextureIndex = kSurfaceMaterialInvalidTextureIndex;
       uint32_t tangentTextureIndex = kSurfaceMaterialInvalidTextureIndex;
       uint32_t heightTextureIndex = kSurfaceMaterialInvalidTextureIndex;
@@ -1991,6 +1993,7 @@ namespace dxvk {
         trackTexture(opaqueMaterialData.getRoughnessTexture(), roughnessTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
         trackTexture(opaqueMaterialData.getMetallicTexture(), metallicTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
         trackTexture(opaqueMaterialData.getSecondaryTexture(), secondaryTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+        trackTexture(opaqueMaterialData.getColorLayerTexture(), colorLayerTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
 
         albedoOpacityConstant.xyz() = opaqueMaterialData.getAlbedoConstant();
         albedoOpacityConstant.w = opaqueMaterialData.getOpacityConstant();
@@ -2105,7 +2108,8 @@ namespace dxvk {
         secondaryTextureIndex,
         albedoTextureIsSrgb, emissiveTextureIsSrgb,
         opaqueMaterialData.getSkyLitParticle(),
-        renderMaterialData.usesLegacyDefaults()
+        renderMaterialData.usesLegacyDefaults(),
+        colorLayerTextureIndex
       };
 
       surfaceMaterial.emplace(opaqueSurfaceMaterial);

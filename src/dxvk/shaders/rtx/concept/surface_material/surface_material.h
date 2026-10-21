@@ -98,7 +98,8 @@ struct OpaqueSurfaceMaterial
 
   // 26
   uint16_t samplerFeedbackStamp;
-  uint16_t data0;
+  // The second colour layer, see REMIXAPI_D3D9_RS_COLOR_LAYER; sampled where the surface has one.
+  uint16_t colorLayerTextureIndex;
 
   // 28-29
   uint dlssControlMask;
