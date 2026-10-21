@@ -70,5 +70,9 @@ static const uint8_t surfaceMaterialTypeMask = uint8_t(0x3u);
 // Note: Bits for flags field in TranslucentSurfaceMaterial and TranslucentSurfaceMaterialInteraction
 // If set, then the texture bound to transmittanceOrDiffuseTextureIndex is an albedo map for the diffuse layer
 #define TRANSLUCENT_SURFACE_MATERIAL_FLAG_USE_DIFFUSE_LAYER (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(0))
+// If set, the normal map is sampled by the material's water normal layers (REMIXAPI_D3D9_RS_WATER_*)
+// instead of the global animated water motion; _Z_UP projects them onto the XY plane, else XZ.
+#define TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(1))
+#define TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(2))
 
 #endif // ifndef SHARED_CONSTANTS_H

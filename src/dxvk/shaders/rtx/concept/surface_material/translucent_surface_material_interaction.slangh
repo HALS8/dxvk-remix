@@ -59,7 +59,34 @@ TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreat
   vec4 emissiveColorSample;
 
   bool secondNormalLoaded = false;
-  if (cb.translucentMaterialArgs.animatedWaterEnable && surface.isAnimatedWater)
+  bool waterLayersLoaded = false;
+  vec3 waterLayersNormal = vec3(0.0f, 0.0f, 1.0f);
+  if (translucentSurfaceMaterial.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS)
+  {
+    // The body's own normal layers, in world space so neighbouring draws of one body line up.
+    const vec3 p = surfaceInteraction.position;
+    const vec2 planar = (translucentSurfaceMaterial.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP) ? p.xy : p.xz;
+    const vec2 meshCoordinates = surfaceInteraction.textureCoordinates;
+    for (uint layer = 0; layer < 3; ++layer)
+    {
+      const float frequency = float(translucentSurfaceMaterial.waterLayers[layer * 3 + 2]);
+      if (frequency == 0.0f)
+      {
+        continue;
+      }
+      const vec2 velocity = vec2(translucentSurfaceMaterial.waterLayers[layer * 3], translucentSurfaceMaterial.waterLayers[layer * 3 + 1]);
+      surfaceInteraction.textureCoordinates = frac(planar * frequency) + frac(cb.timeSinceStartSeconds * velocity);
+      vec4 layerSample;
+      if (surfaceMaterialInteractionTextureReadHelper(translucentSurfaceMaterial.normalTextureIndex, translucentSurfaceMaterial.samplerIndex, surfaceInteraction, layerSample))
+      {
+        const vec3 layerNormal = unsignedOctahedralToHemisphereDirection(vec2(layerSample.xy), cb.translucentMaterialArgs.normalIntensity);
+        waterLayersNormal = waterLayersLoaded ? normalBlendRNM(layerNormal, waterLayersNormal) : layerNormal;
+        waterLayersLoaded = true;
+      }
+    }
+    surfaceInteraction.textureCoordinates = meshCoordinates;
+  }
+  else if (cb.translucentMaterialArgs.animatedWaterEnable && surface.isAnimatedWater)
   {
     vec2 uvSize, uvBias;
     calcSpritesheetValues(
@@ -99,7 +126,11 @@ TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreat
 
   vec3 normal = surfaceInteraction.geometryNormal;
 
-  if (normalLoaded)
+  if (waterLayersLoaded)
+  {
+    normal = normalize(mul(tangentToWorld, waterLayersNormal));
+  }
+  else if (normalLoaded)
   {
     // Note: Using f16 from texture to decode from is fine as the original texture is only 8 bits of precision.
     vec3 tangentNormal = unsignedOctahedralToHemisphereDirection(vec2(normalSample.xy), cb.translucentMaterialArgs.normalIntensity);

@@ -379,7 +379,8 @@ private:
 
   RtTranslucentSurfaceMaterial createTranslucentSurfaceMaterial(const TranslucentMaterialData& translucentMaterialData,
                                                                 uint32_t samplerIndex,
-                                                                bool hasTexcoords);
+                                                                bool hasTexcoords,
+                                                                const WaterNormalLayers& waterNormalLayers = {});
   Rc<DxvkSampler> getOrCreateExternalSampler();
 
   // Acquire/update stable buffer-cache slots for all geometry buffers in geo.

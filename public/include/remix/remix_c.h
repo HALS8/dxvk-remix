@@ -722,6 +722,32 @@ extern "C" {
   //   device->SetRenderState((D3DRENDERSTATETYPE) REMIXAPI_D3D9_RS_COLOR_LAYER, 1 + 3);
   #define REMIXAPI_D3D9_RS_COLOR_LAYER 0x5258430Au
 
+  // D3D9 per-draw water normal layers.
+  //
+  // A translucent water material normally animates one normal map with two global scroll
+  // velocities. A game that describes each water body itself -- several normal layers, each
+  // scrolling its own way at its own scale, so a river flows downstream and a lake barely moves --
+  // sets these render states before the body's draws. Layer i then samples the material's normal
+  // map at
+  //
+  //   uv_i = (p.x, p.z) * frequency_i + time * velocity_i     (p.x, p.y with rtx.zUp)
+  //
+  // where p is the world-space hit position, and the layers are blended together. Velocities are
+  // in texture coordinates per second, frequencies in texture repeats per world unit. Each state
+  // packs two IEEE-754 half floats, the first in the low 16 bits:
+  //
+  //   REMIXAPI_D3D9_RS_WATER_LAYER0/1/2:   velocity u, velocity v of layer 0, 1, 2
+  //   REMIXAPI_D3D9_RS_WATER_FREQUENCY01:  frequency of layer 0, frequency of layer 1
+  //   REMIXAPI_D3D9_RS_WATER_FREQUENCY2:   frequency of layer 2, unused
+  //
+  // A layer with frequency 0 is not sampled; all frequencies 0 (the default) keeps the global
+  // animation. Same lifetime and detection rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  #define REMIXAPI_D3D9_RS_WATER_LAYER0 0x5258430Bu
+  #define REMIXAPI_D3D9_RS_WATER_LAYER1 0x5258430Cu
+  #define REMIXAPI_D3D9_RS_WATER_LAYER2 0x5258430Du
+  #define REMIXAPI_D3D9_RS_WATER_FREQUENCY01 0x5258430Eu
+  #define REMIXAPI_D3D9_RS_WATER_FREQUENCY2 0x5258430Fu
+
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y 0x52584306u

@@ -908,6 +908,7 @@ namespace dxvk {
       return prepareFlagsForIgnoredDraws;
     }
     setColorLayerState();
+    setWaterState();
 
     // Max offseted index value within a buffer slice that geoData contains
     const uint32_t maxOffsetedIndex = maxIndex - minIndex;
@@ -1142,6 +1143,30 @@ namespace dxvk {
     const bool srgb = d3d9State().samplerStates[stage][D3DSAMP_SRGBTEXTURE] & 0x1;
     m_activeDrawCallState.materialData.colorLayerTexture = TextureRef(texture->GetSampleView(srgb));
     m_activeDrawCallState.transformData.colorLayerTransform = d3d9State().transforms[GetTransformIndex(D3DTS_TEXTURE0) + stage];
+  }
+
+  bool D3D9Rtx::IsWaterState(uint32_t state) {
+    static_assert(REMIXAPI_D3D9_RS_WATER_FREQUENCY2 - REMIXAPI_D3D9_RS_WATER_LAYER0 + 1 == kWaterStateCount);
+    return state - REMIXAPI_D3D9_RS_WATER_LAYER0 < kWaterStateCount;
+  }
+
+  void D3D9Rtx::SetWaterState(uint32_t state, uint32_t value) {
+    m_waterStates[state - REMIXAPI_D3D9_RS_WATER_LAYER0] = value;
+  }
+
+  uint32_t D3D9Rtx::GetWaterState(uint32_t state) const {
+    return m_waterStates[state - REMIXAPI_D3D9_RS_WATER_LAYER0];
+  }
+
+  void D3D9Rtx::setWaterState() {
+    WaterNormalLayers& layers = m_activeDrawCallState.materialData.waterNormalLayers;
+    const glm::vec2 frequency01 = glm::unpackHalf2x16(m_waterStates[3]);
+    const float frequency[] = { frequency01.x, frequency01.y, glm::unpackHalf2x16(m_waterStates[4]).x };
+    for (uint32_t i = 0; i < WaterNormalLayers::kCount; ++i) {
+      const glm::vec2 velocity = glm::unpackHalf2x16(m_waterStates[i]);
+      layers.velocity[i] = Vector2(velocity.x, velocity.y);
+      layers.frequency[i] = frequency[i];
+    }
   }
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {

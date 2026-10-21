@@ -35,6 +35,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
     XXH64_hash_t colorTextureHash0;
     XXH64_hash_t colorTextureHash1;
     XXH64_hash_t colorLayerTextureHash;
+    XXH64_hash_t waterNormalLayersHash;
     XXH64_hash_t samplerHash0;
     XXH64_hash_t samplerHash1;
     uint32_t alphaTestCompareOp;
@@ -64,6 +65,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   data.colorTextureHash0 = colorTextures[0].getImageHash();
   data.colorTextureHash1 = colorTextures[1].getImageHash();
   data.colorLayerTextureHash = colorLayerTexture.getImageHash();
+  data.waterNormalLayersHash = XXH3_64bits(&waterNormalLayers, sizeof(waterNormalLayers));
   data.samplerHash0 = samplers[0].ptr() != nullptr ? samplers[0]->info().calculateHash() : kEmptyHash;
   data.samplerHash1 = samplers[1].ptr() != nullptr ? samplers[1]->info().calculateHash() : kEmptyHash;
   data.alphaTestCompareOp = static_cast<uint32_t>(alphaTestCompareOp);
@@ -91,6 +93,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
       &LegacyMaterialIdentityHashData::colorTextureHash0,
       &LegacyMaterialIdentityHashData::colorTextureHash1,
       &LegacyMaterialIdentityHashData::colorLayerTextureHash,
+      &LegacyMaterialIdentityHashData::waterNormalLayersHash,
       &LegacyMaterialIdentityHashData::samplerHash0,
       &LegacyMaterialIdentityHashData::samplerHash1,
       &LegacyMaterialIdentityHashData::alphaTestCompareOp,
@@ -114,6 +117,10 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
       &LegacyMaterialIdentityHashData::isVertexColorBakedLighting,
       &LegacyMaterialIdentityHashData::albedoTintMask,
       &LegacyMaterialIdentityHashData::padding>(data);
+}
+
+bool getZUp() {
+  return RtxOptions::zUp();
 }
 
 bool getEnableDiffuseLayerOverrideHack() {

@@ -264,6 +264,18 @@ namespace dxvk {
     }
 
     /**
+      * \brief: The REMIXAPI_D3D9_RS_WATER_* states describing following draw calls' water normal
+      *         layers, see remix_c.h.
+      */
+    static bool IsWaterState(uint32_t state);
+    void SetWaterState(uint32_t state, uint32_t value);
+    uint32_t GetWaterState(uint32_t state) const;
+
+    void ResetWaterStates() {
+      m_waterStates = {};
+    }
+
+    /**
       * rief: Whether a render state is one of the REMIXAPI_D3D9_RS_TERRAIN_LAYER* states,
       *         see remix_c.h.
       */
@@ -340,6 +352,8 @@ namespace dxvk {
     CategoryFlags m_forcedCategories = 0;
     uint32_t m_albedoTint = 0;
     uint32_t m_colorLayer = 0;
+    static constexpr uint32_t kWaterStateCount = 5;
+    std::array<uint32_t, kWaterStateCount> m_waterStates = {};
     AlbedoTintMask m_albedoTintMask = AlbedoTintMask::None;
 
     // REMIXAPI_D3D9_RS_TERRAIN_LAYER and the states after it, in their numeric order.
@@ -350,6 +364,7 @@ namespace dxvk {
     // texture stages they name.
     void setTerrainLayerState();
     void setColorLayerState();
+    void setWaterState();
 
     // Records a description-only terrain layer draw without submitting its geometry. False when
     // the draw is not one, or cannot be read as a layer.

@@ -2011,6 +2011,11 @@ namespace dxvk {
       return D3D_OK;
     }
 
+    if (unlikely(D3D9Rtx::IsWaterState(static_cast<uint32_t>(State)))) {
+      m_rtx.SetWaterState(static_cast<uint32_t>(State), Value);
+      return D3D_OK;
+    }
+
     if (unlikely(D3D9Rtx::IsTerrainLayerState(static_cast<uint32_t>(State)))) {
       m_rtx.SetTerrainLayerState(static_cast<uint32_t>(State), Value);
       return D3D_OK;
@@ -2366,6 +2371,11 @@ namespace dxvk {
 
     if (unlikely(static_cast<uint32_t>(State) == REMIXAPI_D3D9_RS_COLOR_LAYER)) {
       *pValue = m_rtx.GetColorLayer();
+      return D3D_OK;
+    }
+
+    if (unlikely(D3D9Rtx::IsWaterState(static_cast<uint32_t>(State)))) {
+      *pValue = m_rtx.GetWaterState(static_cast<uint32_t>(State));
       return D3D_OK;
     }
 
@@ -7949,6 +7959,7 @@ namespace dxvk {
     m_rtx.SetForcedCategories(0);
     m_rtx.SetAlbedoTint(REMIXAPI_D3D9_ALBEDO_TINT_NONE);
     m_rtx.SetColorLayer(0);
+    m_rtx.ResetWaterStates();
     m_rtx.ResetTerrainLayerStates();
 
     return D3D_OK;

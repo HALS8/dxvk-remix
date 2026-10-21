@@ -2114,7 +2114,8 @@ namespace dxvk {
 
       surfaceMaterial.emplace(opaqueSurfaceMaterial);
     } else if (renderMaterialDataType == MaterialDataType::Translucent) {
-      surfaceMaterial.emplace(createTranslucentSurfaceMaterial(renderMaterialData.getTranslucentMaterialData(), samplerIndex, hasTexcoords));
+      surfaceMaterial.emplace(createTranslucentSurfaceMaterial(renderMaterialData.getTranslucentMaterialData(), samplerIndex, hasTexcoords,
+                                                               drawCallState.getMaterialData().waterNormalLayers));
     } else if (renderMaterialDataType == MaterialDataType::RayPortal) {
       const auto& rayPortalMaterialData = renderMaterialData.getRayPortalMaterialData();
 
@@ -2151,7 +2152,8 @@ namespace dxvk {
 
   RtTranslucentSurfaceMaterial SceneManager::createTranslucentSurfaceMaterial(const TranslucentMaterialData& translucentMaterialData,
                                                                               uint32_t samplerIndex,
-                                                                              bool hasTexcoords) {
+                                                                              bool hasTexcoords,
+                                                                              const WaterNormalLayers& waterNormalLayers) {
     uint32_t normalTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t transmittanceTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t emissiveColorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
@@ -2175,7 +2177,8 @@ namespace dxvk {
       translucentMaterialData.getThinWallThickness(),
       translucentMaterialData.getEnableDiffuseLayer(),
       samplerIndex,
-      samplerFeedbackStamp
+      samplerFeedbackStamp,
+      waterNormalLayers
     };
   }
 
