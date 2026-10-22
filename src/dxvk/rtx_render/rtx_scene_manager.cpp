@@ -1899,6 +1899,14 @@ namespace dxvk {
     const bool isHairCard = drawCallState.testCategoryFlags(InstanceCategories::HairCards);
     preCreationHash = XXH64(&isHairCard, sizeof(isHairCard), preCreationHash);
 
+    // Per-draw state that shapes the surface material but is not in renderMaterialData's hash: without
+    // it, every draw sharing a texture within a frame would get the first one's water body, flow map or
+    // colour layer.
+    const LegacyMaterialData& drawMaterial = drawCallState.getMaterialData();
+    preCreationHash = XXH64(&drawMaterial.waterBody, sizeof(drawMaterial.waterBody), preCreationHash);
+    const XXH64_hash_t perDrawTextures[] = { drawMaterial.waterFlowTexture.getImageHash(), drawMaterial.colorLayerTexture.getImageHash() };
+    preCreationHash = XXH64(perDrawTextures, sizeof(perDrawTextures), preCreationHash);
+
     // For Opaque materials, fold in a bitmask of which texture slots are populated. MaterialData::getHash()
     // sums TextureRef::getImageHash() across slots, but render-target-backed TextureRefs (notably
     // TerrainBaker cascades) have a zero image hash, so two materials that differ only in cascade
