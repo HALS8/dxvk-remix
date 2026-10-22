@@ -15,17 +15,22 @@ namespace dxvk {
   D3D9CommonShader::D3D9CommonShader()
     : m_bytecodeHash(XXH3_64bits(nullptr, 0)) {}
 
-  // Constants are ignored by name because a game assigns registers per shader: the same camera
-  // matrix can sit at different registers in different shaders, while its name does not change.
-  void D3D9CommonShader::MapFloatConstantNames(const DxsoCtab& ctab) {
-    std::unordered_set<std::string> ignoredNames;
-    for (const std::string& name : str::split(D3D9Rtx::vertexShaderHashIgnoredConstantNames(), ',')) {
+  std::unordered_set<std::string> D3D9CommonShader::SplitConstantNames(const std::string& list) {
+    std::unordered_set<std::string> names;
+    for (const std::string& name : str::split(list, ',')) {
       const size_t first = name.find_first_not_of(" \t");
       const size_t last = name.find_last_not_of(" \t");
       if (first != std::string::npos) {
-        ignoredNames.insert(name.substr(first, last - first + 1));
+        names.insert(name.substr(first, last - first + 1));
       }
     }
+    return names;
+  }
+
+  // Constants are ignored by name because a game assigns registers per shader: the same camera
+  // matrix can sit at different registers in different shaders, while its name does not change.
+  void D3D9CommonShader::MapFloatConstantNames(const DxsoCtab& ctab) {
+    const std::unordered_set<std::string> ignoredNames = SplitConstantNames(D3D9Rtx::vertexShaderHashIgnoredConstantNames());
 
     for (const DxsoCtab::Constant& constant : ctab.m_constantData) {
       if (constant.registerSet != DxsoCtab::registerSetFloat4) {
@@ -189,10 +194,12 @@ namespace dxvk {
     }
     if (D3D9Rtx::vertexShaderHashCapturedOutputsOnly()) {
       const std::vector<bool> used = FindCapturedOutputConstants(ctab, code);
+      const std::unordered_set<std::string> placement = SplitConstantNames(D3D9Rtx::vertexShaderHashPlacementConstantNames());
       uint32_t readByShader = 0, feedingOutputs = 0;
       for (uint32_t r = 0; r < registerCount; ++r) {
         feedingOutputs += used[r] ? 1 : 0;
-        hashed[r] = hashed[r] && used[r];
+        const bool places = r < m_floatConstantNames.size() && placement.count(m_floatConstantNames[r]) != 0;
+        hashed[r] = hashed[r] && (used[r] || places);
       }
       for (const DxsoCtab::Constant& constant : ctab.m_constantData) {
         if (constant.registerSet == DxsoCtab::registerSetFloat4) {

@@ -59,6 +59,12 @@ namespace dxvk {
                "geometry and defeats the draw call cache's exact match. Names rather than registers, because a game assigns registers\n"
                "per shader. Only list constants that cannot move vertices: world, bone, time and wind constants must stay hashed or\n"
                "moving geometry stops updating. Read when a shader is created, so set it at launch. Empty hashes every constant.");
+    RTX_OPTION("rtx", std::string, vertexShaderHashPlacementConstantNames, "",
+               "Comma-separated vertex shader constant names that place a mesh in the world -- a model-to-world matrix -- kept in a\n"
+               "shader-captured draw call's geometry hash even when rtx.vertexShaderHashCapturedOutputsOnly finds they reach no captured\n"
+               "output (a shader that positions vertices through a combined model-to-clip matrix alone). Draws that share a vertex\n"
+               "buffer and hash nothing that places them share one captured mesh, so one capture made with an inconsistent transform\n"
+               "puts every copy in the wrong place until something else in the hash changes. Read when a shader is created.");
     RTX_OPTION("rtx", bool, logChangingVertexShaderConstants, false,
                "Diagnostic for rtx.vertexShaderHashIgnoredConstantNames. Compares each shader-captured draw call's vertex shader float\n"
                "constants with the same draw call's on the previous frame, and every 600 frames logs, per constant name, the share of\n"

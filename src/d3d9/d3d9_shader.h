@@ -6,6 +6,7 @@
 #include "d3d9_util.h"
 
 #include <array>
+#include <unordered_set>
 
 namespace dxvk {
 
@@ -80,6 +81,7 @@ namespace dxvk {
 
   private:
 
+    static std::unordered_set<std::string> SplitConstantNames(const std::string& list);
     void MapFloatConstantNames(const DxsoCtab& ctab);
     std::vector<bool> FindCapturedOutputConstants(const DxsoCtab& ctab,
                                                   const std::vector<DxsoInstructionContext>& code) const;
