@@ -358,7 +358,7 @@ namespace dxvk {
     CategoryFlags m_forcedCategories = 0;
     uint32_t m_albedoTint = 0;
     uint32_t m_colorLayer = 0;
-    static constexpr uint32_t kWaterStateCount = 6;
+    static constexpr uint32_t kWaterStateCount = 7;
     std::array<uint32_t, kWaterStateCount> m_waterStates = {};
     AlbedoTintMask m_albedoTintMask = AlbedoTintMask::None;
 

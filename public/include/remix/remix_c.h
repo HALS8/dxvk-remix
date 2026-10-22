@@ -755,6 +755,22 @@ extern "C" {
   #define REMIXAPI_D3D9_RS_WATER_FREQUENCY2 0x5258430Fu
   #define REMIXAPI_D3D9_RS_WATER_TRANSMITTANCE 0x52584310u
 
+  // D3D9 per-draw water flow map.
+  //
+  // A game whose rivers carry a flow map -- a texture of 2D flow vectors over the water's own
+  // texture coordinates, 0.5 meaning still -- binds it to a texture stage and sets this render state
+  // to (1 + that stage) in the low 8 bits and a phase rate, cycles per second as an IEEE-754 half
+  // float, in the high 16. Normal layer 0 of REMIXAPI_D3D9_RS_WATER_LAYER0 is then flow mapped
+  // instead of scrolled: it is sampled twice, half a cycle apart, at
+  //
+  //   position * frequency0 + flow * frac(time * rate + phase jitter)
+  //
+  // and cross-faded, so the surface moves along the flow without stretching; layers 1 and 2 keep
+  // scrolling and fade out where the flow is strong. The flow map is sampled at the draw's first
+  // texture coordinate after its texture transform. 0 turns it off. Same lifetime and detection
+  // rules as REMIXAPI_D3D9_RS_SUPPRESS_CATEGORIES above.
+  #define REMIXAPI_D3D9_RS_WATER_FLOW 0x52584311u
+
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER 0x52584304u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_X 0x52584305u
   #define REMIXAPI_D3D9_RS_TERRAIN_LAYER_ORIGIN_Y 0x52584306u

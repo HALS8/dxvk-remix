@@ -36,6 +36,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
     XXH64_hash_t colorTextureHash1;
     XXH64_hash_t colorLayerTextureHash;
     XXH64_hash_t waterBodyHash;
+    XXH64_hash_t waterFlowTextureHash;
     XXH64_hash_t samplerHash0;
     XXH64_hash_t samplerHash1;
     uint32_t alphaTestCompareOp;
@@ -66,6 +67,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
   data.colorTextureHash1 = colorTextures[1].getImageHash();
   data.colorLayerTextureHash = colorLayerTexture.getImageHash();
   data.waterBodyHash = XXH3_64bits(&waterBody, sizeof(waterBody));
+  data.waterFlowTextureHash = waterFlowTexture.getImageHash();
   data.samplerHash0 = samplers[0].ptr() != nullptr ? samplers[0]->info().calculateHash() : kEmptyHash;
   data.samplerHash1 = samplers[1].ptr() != nullptr ? samplers[1]->info().calculateHash() : kEmptyHash;
   data.alphaTestCompareOp = static_cast<uint32_t>(alphaTestCompareOp);
@@ -94,6 +96,7 @@ XXH64_hash_t LegacyMaterialData::computeIdentityHash() const {
       &LegacyMaterialIdentityHashData::colorTextureHash1,
       &LegacyMaterialIdentityHashData::colorLayerTextureHash,
       &LegacyMaterialIdentityHashData::waterBodyHash,
+      &LegacyMaterialIdentityHashData::waterFlowTextureHash,
       &LegacyMaterialIdentityHashData::samplerHash0,
       &LegacyMaterialIdentityHashData::samplerHash1,
       &LegacyMaterialIdentityHashData::alphaTestCompareOp,

@@ -1146,7 +1146,7 @@ namespace dxvk {
   }
 
   bool D3D9Rtx::IsWaterState(uint32_t state) {
-    static_assert(REMIXAPI_D3D9_RS_WATER_TRANSMITTANCE - REMIXAPI_D3D9_RS_WATER_LAYER0 + 1 == kWaterStateCount);
+    static_assert(REMIXAPI_D3D9_RS_WATER_FLOW - REMIXAPI_D3D9_RS_WATER_LAYER0 + 1 == kWaterStateCount);
     return state - REMIXAPI_D3D9_RS_WATER_LAYER0 < kWaterStateCount;
   }
 
@@ -1168,6 +1168,20 @@ namespace dxvk {
       layers.frequency[i] = frequency[i];
     }
     layers.transmittance = m_waterStates[5];
+
+    m_activeDrawCallState.materialData.waterFlowTexture = {};
+    layers.flowRate = 0.f;
+    const uint32_t flow = m_waterStates[6];
+    const uint32_t stage = (flow & 0xFF) - 1;
+    if ((flow & 0xFF) == 0 || stage >= caps::TextureStageCount || d3d9State().textures[stage] == nullptr) {
+      return;
+    }
+    D3D9CommonTexture* texture = GetCommonTexture(d3d9State().textures[stage]);
+    if (texture->GetType() != D3DRTYPE_TEXTURE) {
+      return;
+    }
+    m_activeDrawCallState.materialData.waterFlowTexture = TextureRef(texture->GetSampleView(false));
+    layers.flowRate = glm::unpackHalf1x16(static_cast<uint16_t>(flow >> 16));
   }
 
   void D3D9Rtx::SetAlbedoTint(uint32_t mode) {

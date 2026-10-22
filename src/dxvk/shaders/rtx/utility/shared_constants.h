@@ -74,5 +74,7 @@ static const uint8_t surfaceMaterialTypeMask = uint8_t(0x3u);
 // instead of the global animated water motion; _Z_UP projects them onto the XY plane, else XZ.
 #define TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(1))
 #define TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(2))
+// If set, water normal layer 0 is flow mapped by waterFlowTextureIndex (REMIXAPI_D3D9_RS_WATER_FLOW).
+#define TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_FLOW (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(3))
 
 #endif // ifndef SHARED_CONSTANTS_H

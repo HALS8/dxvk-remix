@@ -1057,6 +1057,9 @@ struct WaterBody {
   Vector2 velocity[kCount] = {};
   float frequency[kCount] = {};
   uint32_t transmittance = 0;   // D3DCOLOR
+  // Phase rate of the flow-mapped layer 0, cycles per second; 0 without a flow map
+  // (REMIXAPI_D3D9_RS_WATER_FLOW).
+  float flowRate = 0.f;
 
   bool hasNormalLayers() const {
     return frequency[0] != 0.f || frequency[1] != 0.f || frequency[2] != 0.f;
@@ -1080,7 +1083,8 @@ struct RtTranslucentSurfaceMaterial {
     float transmittanceMeasurementDistance, const Vector3& transmittanceColor,
     bool enableEmission, float emissiveIntensity, const Vector3& emissiveColorConstant,
     bool isThinWalled, float thinWallThickness, bool useDiffuseLayer, uint32_t samplerIndex,
-    uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID, const WaterBody& waterBody = {}) :
+    uint16_t samplerFeedbackStamp = SAMPLER_FEEDBACK_INVALID, const WaterBody& waterBody = {},
+    uint32_t waterFlowTextureIndex = kSurfaceMaterialInvalidTextureIndex) :
     m_normalTextureIndex(normalTextureIndex),
     m_transmittanceTextureIndex(transmittanceTextureIndex),
     m_emissiveColorTextureIndex(emissiveColorTextureIndex),
@@ -1088,7 +1092,7 @@ struct RtTranslucentSurfaceMaterial {
     m_transmittanceMeasurementDistance(transmittanceMeasurementDistance), m_transmittanceColor(transmittanceColor),
     m_enableEmission(enableEmission), m_emissiveIntensity(emissiveIntensity), m_emissiveColorConstant(emissiveColorConstant),
     m_isThinWalled(isThinWalled), m_thinWallThickness(thinWallThickness), m_useDiffuseLayer(useDiffuseLayer), m_samplerIndex(samplerIndex),
-    m_samplerFeedbackStamp(samplerFeedbackStamp), m_waterBody(waterBody)
+    m_samplerFeedbackStamp(samplerFeedbackStamp), m_waterBody(waterBody), m_waterFlowTextureIndex(waterFlowTextureIndex)
   {
     updateCachedData();
     updateCachedHash();
@@ -1111,6 +1115,9 @@ struct RtTranslucentSurfaceMaterial {
       flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS;
       if (getZUp()) {
         flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP;
+      }
+      if (hasWaterFlow()) {
+        flags |= TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_FLOW;
       }
     }
 
@@ -1157,8 +1164,12 @@ struct RtTranslucentSurfaceMaterial {
       writeGPUHelper(data, offset, glm::packHalf1x16(m_waterBody.frequency[i]));
     }
 
-    // data[27 - 31]
-    writeGPUPadding<10>(data, offset);
+    // data[27]: water flow map, data[28]: its phase rate
+    writeGPUHelperExplicit<2>(data, offset, m_waterFlowTextureIndex);
+    writeGPUHelper(data, offset, glm::packHalf1x16(m_waterBody.flowRate));
+
+    // data[29 - 31]
+    writeGPUPadding<6>(data, offset);
 
     assert(offset - oldOffset == kSurfaceMaterialGPUSize);
   }
@@ -1184,12 +1195,17 @@ struct RtTranslucentSurfaceMaterial {
     fn(m_normalTextureIndex);
     fn(m_transmittanceTextureIndex);
     fn(m_emissiveColorTextureIndex);
+    fn(m_waterFlowTextureIndex);
   }
 
 private:
+  bool hasWaterFlow() const {
+    return m_waterBody.flowRate != 0.f && m_waterFlowTextureIndex != kSurfaceMaterialInvalidTextureIndex;
+  }
+
   void updateCachedHash() {
     static_assert(
-      sizeof(*this) == 136,
+      sizeof(*this) == 144,
       "add new member for hashing if needed: add a MEMBER into the struct + add a VALUE into the list-init"
     );
     struct HashStruct {
@@ -1208,6 +1224,7 @@ private:
       uint32_t samplerIndex;
       uint32_t samplerFeedbackStamp; // NOTE: uint32_t to avoid padding
       WaterBody waterBody;
+      uint32_t waterFlowTextureIndex;
       // NOTE: There must be NO padding between members, as the struct is used for hashing
     };
     static_assert(alignof(HashStruct) == 4 && sizeof(HashStruct) % 4 == 0);
@@ -1227,6 +1244,7 @@ private:
       m_samplerIndex,
       m_samplerFeedbackStamp,
       m_waterBody,
+      m_waterFlowTextureIndex,
     };
     m_cachedHash = XXH3_64bits(&hashData, sizeof(hashData));
   }
@@ -1268,6 +1286,7 @@ private:
   bool m_useDiffuseLayer;
   uint16_t m_samplerFeedbackStamp;
   WaterBody m_waterBody;
+  uint32_t m_waterFlowTextureIndex;
 
   XXH64_hash_t m_cachedHash;
 
@@ -2013,6 +2032,7 @@ struct LegacyMaterialData {
   TextureRef colorLayerTexture;
   // Set from REMIXAPI_D3D9_RS_WATER_*, see remix_c.h; applies to a translucent material.
   WaterBody waterBody;
+  TextureRef waterFlowTexture;
 
   void setHashOverride(XXH64_hash_t hash) {
     m_cachedHash = hash;

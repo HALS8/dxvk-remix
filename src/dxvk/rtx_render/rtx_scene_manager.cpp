@@ -2115,7 +2115,8 @@ namespace dxvk {
       surfaceMaterial.emplace(opaqueSurfaceMaterial);
     } else if (renderMaterialDataType == MaterialDataType::Translucent) {
       surfaceMaterial.emplace(createTranslucentSurfaceMaterial(renderMaterialData.getTranslucentMaterialData(), samplerIndex, hasTexcoords,
-                                                               drawCallState.getMaterialData().waterBody));
+                                                               drawCallState.getMaterialData().waterBody,
+                                                               drawCallState.getMaterialData().waterFlowTexture));
     } else if (renderMaterialDataType == MaterialDataType::RayPortal) {
       const auto& rayPortalMaterialData = renderMaterialData.getRayPortalMaterialData();
 
@@ -2153,7 +2154,8 @@ namespace dxvk {
   RtTranslucentSurfaceMaterial SceneManager::createTranslucentSurfaceMaterial(const TranslucentMaterialData& translucentMaterialData,
                                                                               uint32_t samplerIndex,
                                                                               bool hasTexcoords,
-                                                                              const WaterBody& waterBody) {
+                                                                              const WaterBody& waterBody,
+                                                                              const TextureRef& waterFlowTexture) {
     uint32_t normalTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t transmittanceTextureIndex = kSurfaceMaterialInvalidTextureIndex;
     uint32_t emissiveColorTextureIndex = kSurfaceMaterialInvalidTextureIndex;
@@ -2162,6 +2164,8 @@ namespace dxvk {
     trackTexture(translucentMaterialData.getNormalTexture(), normalTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
     trackTexture(translucentMaterialData.getTransmittanceTexture(), transmittanceTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
     trackTexture(translucentMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, &samplerFeedbackStamp);
+    uint32_t waterFlowTextureIndex = kSurfaceMaterialInvalidTextureIndex;
+    trackTexture(waterFlowTexture, waterFlowTextureIndex, hasTexcoords, false);
 
     return RtTranslucentSurfaceMaterial{
       normalTextureIndex,
@@ -2178,7 +2182,8 @@ namespace dxvk {
       translucentMaterialData.getEnableDiffuseLayer(),
       samplerIndex,
       samplerFeedbackStamp,
-      waterBody
+      waterBody,
+      waterFlowTextureIndex
     };
   }
 

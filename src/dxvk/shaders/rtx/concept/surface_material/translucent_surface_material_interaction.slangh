@@ -41,6 +41,48 @@ f16vec3 translucentSurfaceMaterialInteractionResolveTransmittanceColor(f16vec3 t
   return gammaToLinear(transmittanceColor);
 }
 
+// Smooth value noise over a unit lattice, in [0, 1].
+float waterValueNoise(vec2 x)
+{
+  const vec2 cell = floor(x);
+  vec2 f = frac(x);
+  f = f * f * (3.0f - 2.0f * f);
+  const vec2 k = vec2(127.1f, 311.7f);
+  const float a = frac(sin(dot(cell, k)) * 43758.5453f);
+  const float b = frac(sin(dot(cell + vec2(1.0f, 0.0f), k)) * 43758.5453f);
+  const float c = frac(sin(dot(cell + vec2(0.0f, 1.0f), k)) * 43758.5453f);
+  const float d = frac(sin(dot(cell + vec2(1.0f, 1.0f), k)) * 43758.5453f);
+  return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// The flow-mapped normal layer of REMIXAPI_D3D9_RS_WATER_FLOW: two samples half a cycle apart, each
+// pushed along the flow by its phase and jumped to a fresh offset when its phase wraps, cross-faded
+// so that neither is seen as it wraps. A slowly varying noise staggers the phase so the surface
+// does not pulse in step.
+vec3 waterFlowLayerNormal(TranslucentSurfaceMaterial translucentSurfaceMaterial, inout SurfaceInteraction surfaceInteraction,
+                          vec2 planar, float frequency, vec2 flow)
+{
+  const float kJitterCellMeters = 40.0f;
+  const float kWrapOffset = 0.7f;
+  const float phaseA = cb.timeSinceStartSeconds * float(translucentSurfaceMaterial.waterFlowRate) +
+                       0.5f * waterValueNoise(planar / kJitterCellMeters);
+  const float phaseB = phaseA + 0.5f;
+  const vec2 base = planar * frequency;
+
+  vec3 normals[2];
+  const float phases[2] = { phaseA, phaseB };
+  for (uint i = 0; i < 2; ++i)
+  {
+    surfaceInteraction.textureCoordinates = frac(base + floor(phases[i]) * kWrapOffset) + flow * frac(phases[i]);
+    vec4 layerSample;
+    normals[i] = surfaceMaterialInteractionTextureReadHelper(translucentSurfaceMaterial.normalTextureIndex, translucentSurfaceMaterial.samplerIndex, surfaceInteraction, layerSample)
+      ? unsignedOctahedralToHemisphereDirection(vec2(layerSample.xy), cb.translucentMaterialArgs.normalIntensity)
+      : vec3(0.0f, 0.0f, 1.0f);
+  }
+  const float towardsB = abs(0.5f - frac(phaseA)) * 2.0f;
+  return normalize(lerp(normals[0], normals[1], towardsB));
+}
+
 // Translucent Surface Material Interaction Functions
 
 TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreate(
@@ -67,11 +109,33 @@ TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreat
     const vec3 p = surfaceInteraction.position;
     const vec2 planar = (translucentSurfaceMaterial.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS_Z_UP) ? p.xy : p.xz;
     const vec2 meshCoordinates = surfaceInteraction.textureCoordinates;
+
+    // A flow-mapped layer 0 (REMIXAPI_D3D9_RS_WATER_FLOW): the flow vector and how much of the
+    // surface it moves. Still water (no flow) leaves the scrolling layers in full.
+    vec2 flow = vec2(0.0f);
+    bool flowLoaded = false;
+    if (translucentSurfaceMaterial.flags & TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_FLOW)
+    {
+      vec4 flowSample;
+      flowLoaded = surfaceMaterialInteractionTextureReadHelper(translucentSurfaceMaterial.waterFlowTextureIndex, translucentSurfaceMaterial.samplerIndex, surfaceInteraction, flowSample);
+      flow = flowLoaded ? vec2(flowSample.xy) * 2.0f - 1.0f : vec2(0.0f);
+    }
+    const float flowStrength = length(flow);
+
+    vec3 flowNormal = vec3(0.0f, 0.0f, 1.0f);
+    vec3 scrollNormal = vec3(0.0f, 0.0f, 1.0f);
+    bool scrollLoaded = false;
     for (uint layer = 0; layer < 3; ++layer)
     {
       const float frequency = float(translucentSurfaceMaterial.waterLayers[layer * 3 + 2]);
       if (frequency == 0.0f)
       {
+        continue;
+      }
+      if (layer == 0 && flowLoaded)
+      {
+        flowNormal = waterFlowLayerNormal(translucentSurfaceMaterial, surfaceInteraction, planar, frequency, flow);
+        waterLayersLoaded = true;
         continue;
       }
       const vec2 velocity = vec2(translucentSurfaceMaterial.waterLayers[layer * 3], translucentSurfaceMaterial.waterLayers[layer * 3 + 1]);
@@ -80,10 +144,16 @@ TranslucentSurfaceMaterialInteraction translucentSurfaceMaterialInteractionCreat
       if (surfaceMaterialInteractionTextureReadHelper(translucentSurfaceMaterial.normalTextureIndex, translucentSurfaceMaterial.samplerIndex, surfaceInteraction, layerSample))
       {
         const vec3 layerNormal = unsignedOctahedralToHemisphereDirection(vec2(layerSample.xy), cb.translucentMaterialArgs.normalIntensity);
-        waterLayersNormal = waterLayersLoaded ? normalBlendRNM(layerNormal, waterLayersNormal) : layerNormal;
+        scrollNormal = scrollLoaded ? normalBlendRNM(layerNormal, scrollNormal) : layerNormal;
+        scrollLoaded = true;
         waterLayersLoaded = true;
       }
     }
+    // As the client's flow shader weighs them: the flow layer by twice the squared flow, the
+    // scrolling layers by what the flow leaves.
+    const vec3 up = vec3(0.0f, 0.0f, 1.0f);
+    waterLayersNormal = normalize(up + 2.0f * flowStrength * flowStrength * (flowNormal - up) +
+                                  saturate(1.0f - flowStrength) * (scrollNormal - up));
     surfaceInteraction.textureCoordinates = meshCoordinates;
   }
   else if (cb.translucentMaterialArgs.animatedWaterEnable && surface.isAnimatedWater)

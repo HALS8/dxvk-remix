@@ -144,8 +144,12 @@ struct TranslucentSurfaceMaterial
   // 18-26: water normal layers (velocity u, velocity v, frequency), see TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_LAYERS
   float16_t waterLayers[9];
 
+  // 27-28: water flow map and its phase rate, see TRANSLUCENT_SURFACE_MATERIAL_FLAG_WATER_FLOW
+  uint16_t waterFlowTextureIndex;
+  float16_t waterFlowRate;
+
   // padding (to keep size matching with MemoryPolymorphicSurfaceMaterial)
-  uint16_t data[5];
+  uint16_t data[3];
 };
 
 struct RayPortalSurfaceMaterial
